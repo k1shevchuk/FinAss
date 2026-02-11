@@ -18,8 +18,11 @@ from app.infra.google.drive_sharing import DriveSharing
 from app.infra.google.template_builder import (
     AUDIT_HEADERS,
     CATEGORIES_HEADERS,
-    DASHBOARD_VALUES,
+    DASHBOARD_BATCH_VALUES,
+    DASHBOARD_PERIOD_OPTIONS,
+    DASHBOARD_VERSION,
     EXPENSES_HEADERS,
+    LEDGER_HEADERS,
     SETTINGS_HEADERS,
     USERS_HEADERS,
     default_categories,
@@ -45,36 +48,10 @@ class GoogleSheetsGateway:
         self._service_account_email: str | None = None
 
     async def create_spreadsheet(self, owner: OwnerContext) -> SpreadsheetInfo:
-        title = f"Expense Tracker - {owner.display_name}"
-        folder_id = (self._settings.google_drive_parent_folder_id or "").strip() or None
-
-        try:
-            if folder_id:
-                spreadsheet = await self._create_spreadsheet_in_folder(
-                    title=title,
-                    folder_id=folder_id,
-                )
-                await self._ensure_template_tabs(
-                    sheet_id=spreadsheet.sheet_id,
-                    rename_first_to_dashboard=True,
-                )
-            else:
-                await self._assert_can_create_in_service_account_drive()
-                spreadsheet = await self._create_spreadsheet_in_service_account_drive(title=title)
-
-            await self._write_template(sheet_id=spreadsheet.sheet_id, owner=owner)
-            await self.share_spreadsheet(
-                sheet_id=spreadsheet.sheet_id,
-                email=owner.google_share_email,
-                role="writer",
-            )
-            return spreadsheet
-        except PermissionError:
-            raise
-        except HttpError as exc:
-            raise PermissionError(
-                self._build_permission_hint(folder_id=folder_id, http_error=exc)
-            ) from exc
+        _ = owner
+        raise RuntimeError(
+            "Spreadsheet creation flow is disabled. Use attach_existing_spreadsheet."
+        )
 
     async def attach_existing_spreadsheet(
         self,
@@ -145,6 +122,38 @@ class GoogleSheetsGateway:
             return await asyncio.to_thread(request.execute)
 
         result = await self._retry_http(_append)
+        updated = result.get("updates", {}).get("updatedRows", len(rows))
+        return AppendResult(updated_rows=int(updated))
+
+    async def append_ledger(self, *, sheet_id: str, rows: list[list[str]]) -> AppendResult:
+        if not rows:
+            return AppendResult(updated_rows=0)
+        body = {"values": rows}
+
+        async def _append() -> dict[str, Any]:
+            request = (
+                self._sheets.spreadsheets()
+                .values()
+                .append(
+                    spreadsheetId=sheet_id,
+                    range="ledger!A1",
+                    valueInputOption="USER_ENTERED",
+                    insertDataOption="INSERT_ROWS",
+                    body=body,
+                )
+            )
+            return await asyncio.to_thread(request.execute)
+
+        try:
+            result = await self._retry_http(_append)
+        except HttpError as exc:
+            if getattr(exc.resp, "status", None) != 400:
+                raise
+            await self._ensure_template_tabs(
+                sheet_id=sheet_id,
+                rename_first_to_dashboard=False,
+            )
+            result = await self._retry_http(_append)
         updated = result.get("updates", {}).get("updatedRows", len(rows))
         return AppendResult(updated_rows=int(updated))
 
@@ -276,23 +285,160 @@ class GoogleSheetsGateway:
             mapped.append(dict(item))
         return mapped
 
+    async def read_ledger(self, *, sheet_id: str) -> list[dict[str, str]]:
+        async def _read() -> dict[str, Any]:
+            request = (
+                self._sheets.spreadsheets()
+                .values()
+                .get(spreadsheetId=sheet_id, range="ledger!A1:J")
+            )
+            return await asyncio.to_thread(request.execute)
+
+        try:
+            result = await self._retry_http(_read)
+        except HttpError as exc:
+            if getattr(exc.resp, "status", None) == 400:
+                return []
+            raise
+        values = result.get("values", [])
+        if not values:
+            return []
+        headers = values[0]
+        rows = values[1:]
+        mapped: list[dict[str, str]] = []
+        for row in rows:
+            item = defaultdict(str)
+            for index, key in enumerate(headers):
+                if index < len(row):
+                    item[str(key)] = str(row[index])
+            mapped.append(dict(item))
+        return mapped
+
+    async def purge_actor_data(self, *, sheet_id: str, actor_telegram_id: int) -> None:
+        actor = str(actor_telegram_id)
+
+        expense_rows = await self._read_range(sheet_id=sheet_id, range_name="expenses!A2:R")
+        filtered_expenses = [
+            row for row in expense_rows if len(row) <= 4 or str(row[4]).strip() != actor
+        ]
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="expenses",
+            headers=EXPENSES_HEADERS,
+            rows=filtered_expenses,
+        )
+
+        users_rows = await self._read_range(sheet_id=sheet_id, range_name="users!A2:D")
+        filtered_users = [
+            row for row in users_rows if len(row) == 0 or str(row[0]).strip() != actor
+        ]
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="users",
+            headers=USERS_HEADERS,
+            rows=filtered_users,
+        )
+
+        audit_rows = await self._read_range(sheet_id=sheet_id, range_name="audit!A2:D")
+        filtered_audit = [
+            row for row in audit_rows if len(row) <= 1 or str(row[1]).strip() != actor
+        ]
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="audit",
+            headers=AUDIT_HEADERS,
+            rows=filtered_audit,
+        )
+
+        ledger_rows = await self._read_range(sheet_id=sheet_id, range_name="ledger!A2:J")
+        filtered_ledger = [
+            row for row in ledger_rows if len(row) <= 4 or str(row[4]).strip() != actor
+        ]
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="ledger",
+            headers=LEDGER_HEADERS,
+            rows=filtered_ledger,
+        )
+
+    async def wipe_family_data(self, *, sheet_id: str) -> None:
+        settings = await self.get_settings(sheet_id=sheet_id)
+        currency = settings.get("currency", "RUB")
+        timezone = settings.get("timezone", self._settings.default_timezone)
+        rounding_mode = settings.get("rounding_mode", "HALF_UP")
+
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="expenses",
+            headers=EXPENSES_HEADERS,
+            rows=[],
+        )
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="users",
+            headers=USERS_HEADERS,
+            rows=[],
+        )
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="audit",
+            headers=AUDIT_HEADERS,
+            rows=[],
+        )
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="ledger",
+            headers=LEDGER_HEADERS,
+            rows=[],
+        )
+        default_category_rows = [
+            [item.category, ", ".join(item.keywords), "true" if item.enabled else "false"]
+            for item in default_categories()
+        ]
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="categories",
+            headers=CATEGORIES_HEADERS,
+            rows=default_category_rows,
+        )
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name="settings",
+            headers=SETTINGS_HEADERS,
+            rows=[
+                ["currency", currency],
+                ["timezone", timezone],
+                ["rounding_mode", rounding_mode],
+                ["main_balance", "0.00"],
+                ["savings_balance", "0.00"],
+                ["updated_at_utc", ""],
+                ["dashboard_version", DASHBOARD_VERSION],
+            ],
+        )
+        await self._write_dashboard(sheet_id=sheet_id)
+
     async def _write_template(self, *, sheet_id: str, owner: OwnerContext) -> None:
         headers_body = {
             "valueInputOption": "RAW",
             "data": [
-                {"range": "dashboard!A1:B1", "values": [["Expense Tracker Dashboard", ""]]},
+                {"range": "dashboard!A1:D1", "values": [["Expense Tracker Dashboard", "", "", ""]]},
                 {"range": "expenses!A1:R1", "values": [EXPENSES_HEADERS]},
                 {"range": "categories!A1:C1", "values": [CATEGORIES_HEADERS]},
                 {"range": "users!A1:D1", "values": [USERS_HEADERS]},
                 {"range": "settings!A1:B1", "values": [SETTINGS_HEADERS]},
                 {"range": "audit!A1:D1", "values": [AUDIT_HEADERS]},
+                {"range": "ledger!A1:J1", "values": [LEDGER_HEADERS]},
             ],
         }
 
         async def _batch_headers() -> dict[str, Any]:
-            request = self._sheets.spreadsheets().values().batchUpdate(
-                spreadsheetId=sheet_id,
-                body=headers_body,
+            request = (
+                self._sheets.spreadsheets()
+                .values()
+                .batchUpdate(
+                    spreadsheetId=sheet_id,
+                    body=headers_body,
+                )
             )
             return await asyncio.to_thread(request.execute)
 
@@ -304,28 +450,45 @@ class GoogleSheetsGateway:
 
     async def _write_dashboard(self, *, sheet_id: str) -> None:
         async def _clear() -> dict[str, Any]:
-            request = self._sheets.spreadsheets().values().clear(
-                spreadsheetId=sheet_id,
-                range="dashboard!A1:Z100",
-                body={},
+            request = (
+                self._sheets.spreadsheets()
+                .values()
+                .clear(
+                    spreadsheetId=sheet_id,
+                    range="dashboard!A1:Z500",
+                    body={},
+                )
             )
             return await asyncio.to_thread(request.execute)
 
         await self._retry_http(_clear)
-        await self._append_rows(
+        await self._batch_update_values(sheet_id=sheet_id, data=DASHBOARD_BATCH_VALUES)
+        metadata = await self._get_spreadsheet_metadata(sheet_id=sheet_id)
+        dashboard_sheet_id = metadata["dashboard"]
+        await self._format_dashboard(sheet_id=sheet_id, dashboard_sheet_id=dashboard_sheet_id)
+        await self._set_dashboard_period_validation(
             sheet_id=sheet_id,
-            range_name="dashboard!A1",
-            rows=DASHBOARD_VALUES,
+            dashboard_sheet_id=dashboard_sheet_id,
+        )
+        await self._rebuild_dashboard_charts(
+            sheet_id=sheet_id,
+            dashboard_sheet_id=dashboard_sheet_id,
         )
 
     async def _ensure_default_categories(self, *, sheet_id: str) -> None:
         rows = await self._read_range(sheet_id=sheet_id, range_name="categories!A2:C")
-        if rows:
-            return
+        existing_categories = {
+            str(row[0]).strip().casefold()
+            for row in rows
+            if len(row) > 0 and str(row[0]).strip()
+        }
         rows_categories = [
             [item.category, ", ".join(item.keywords), "true" if item.enabled else "false"]
             for item in default_categories()
+            if item.category.casefold() not in existing_categories
         ]
+        if not rows_categories:
+            return
         await self._append_rows(
             sheet_id=sheet_id,
             range_name="categories!A1",
@@ -357,6 +520,10 @@ class GoogleSheetsGateway:
             "currency": owner.currency,
             "timezone": owner.timezone,
             "rounding_mode": "HALF_UP",
+            "main_balance": "0.00",
+            "savings_balance": "0.00",
+            "updated_at_utc": "",
+            "dashboard_version": DASHBOARD_VERSION,
         }
         for key, value in defaults.items():
             if key in settings:
@@ -377,6 +544,7 @@ class GoogleSheetsGateway:
                 {"properties": {"title": "users"}},
                 {"properties": {"title": "settings"}},
                 {"properties": {"title": "audit"}},
+                {"properties": {"title": "ledger"}},
             ],
         }
 
@@ -415,7 +583,9 @@ class GoogleSheetsGateway:
 
         created = await self._retry_http(_create)
         sheet_id = str(created["id"])
-        sheet_url = str(created.get("webViewLink") or f"https://docs.google.com/spreadsheets/d/{sheet_id}")
+        sheet_url = str(
+            created.get("webViewLink") or f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+        )
         return SpreadsheetInfo(sheet_id=sheet_id, sheet_url=sheet_url)
 
     async def _assert_can_create_in_service_account_drive(self) -> None:
@@ -447,7 +617,7 @@ class GoogleSheetsGateway:
         async def _get_spreadsheet() -> dict[str, Any]:
             request = self._sheets.spreadsheets().get(
                 spreadsheetId=sheet_id,
-                fields="sheets(properties(sheetId,title))",
+                fields="sheets(properties(sheetId,title),charts(chartId,position(sheetId)))",
             )
             return await asyncio.to_thread(request.execute)
 
@@ -465,7 +635,7 @@ class GoogleSheetsGateway:
                 first_sheet_id = int(props["sheetId"])
 
         requests: list[dict[str, Any]] = []
-        required = ["dashboard", "expenses", "categories", "users", "settings", "audit"]
+        required = ["dashboard", "expenses", "categories", "users", "settings", "audit", "ledger"]
 
         if "dashboard" not in titles:
             if rename_first_to_dashboard and first_sheet_id is not None:
@@ -498,6 +668,515 @@ class GoogleSheetsGateway:
             return await asyncio.to_thread(request.execute)
 
         await self._retry_http(_batch_update)
+
+    async def _batch_update_values(self, *, sheet_id: str, data: list[dict[str, Any]]) -> None:
+        async def _batch() -> dict[str, Any]:
+            request = (
+                self._sheets.spreadsheets()
+                .values()
+                .batchUpdate(
+                    spreadsheetId=sheet_id,
+                    body={"valueInputOption": "USER_ENTERED", "data": data},
+                )
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_batch)
+
+    async def _get_spreadsheet_metadata(self, *, sheet_id: str) -> dict[str, int]:
+        async def _get() -> dict[str, Any]:
+            request = self._sheets.spreadsheets().get(
+                spreadsheetId=sheet_id,
+                fields="sheets(properties(sheetId,title))",
+            )
+            return await asyncio.to_thread(request.execute)
+
+        response = await self._retry_http(_get)
+        mapping: dict[str, int] = {}
+        for sheet in response.get("sheets", []):
+            props = sheet.get("properties", {})
+            title = str(props.get("title", "")).strip()
+            raw_sheet_id = props.get("sheetId")
+            if title and raw_sheet_id is not None:
+                mapping[title] = int(raw_sheet_id)
+        if "dashboard" not in mapping:
+            raise ValueError("Dashboard sheet not found")
+        return mapping
+
+    async def _format_dashboard(self, *, sheet_id: str, dashboard_sheet_id: int) -> None:
+        requests = [
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "startRowIndex": 0,
+                        "endRowIndex": 1,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 4,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"bold": True, "fontSize": 16},
+                            "horizontalAlignment": "LEFT",
+                            "backgroundColorStyle": {
+                                "rgbColor": {"red": 0.89, "green": 0.95, "blue": 1.0}
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat(textFormat,horizontalAlignment,backgroundColorStyle)",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "startRowIndex": 5,
+                        "endRowIndex": 6,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 2,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"bold": True},
+                            "backgroundColorStyle": {
+                                "rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "startRowIndex": 14,
+                        "endRowIndex": 15,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 2,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"bold": True},
+                            "backgroundColorStyle": {
+                                "rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "startRowIndex": 14,
+                        "endRowIndex": 15,
+                        "startColumnIndex": 3,
+                        "endColumnIndex": 5,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"bold": True},
+                            "backgroundColorStyle": {
+                                "rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "startRowIndex": 6,
+                        "endRowIndex": 12,
+                        "startColumnIndex": 1,
+                        "endColumnIndex": 2,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}
+                        }
+                    },
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "startRowIndex": 32,
+                        "endRowIndex": 33,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 6,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"bold": True, "fontSize": 13},
+                            "backgroundColorStyle": {
+                                "rgbColor": {"red": 0.89, "green": 0.95, "blue": 1.0}
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "startRowIndex": 34,
+                        "endRowIndex": 35,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 6,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"bold": True},
+                            "backgroundColorStyle": {
+                                "rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "startRowIndex": 35,
+                        "endRowIndex": 235,
+                        "startColumnIndex": 1,
+                        "endColumnIndex": 6,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}
+                        }
+                    },
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": dashboard_sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 0,
+                        "endIndex": 8,
+                    },
+                    "properties": {"pixelSize": 165},
+                    "fields": "pixelSize",
+                }
+            },
+        ]
+
+        async def _batch() -> dict[str, Any]:
+            request = self._sheets.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={"requests": requests},
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_batch)
+
+    async def _set_dashboard_period_validation(
+        self,
+        *,
+        sheet_id: str,
+        dashboard_sheet_id: int,
+    ) -> None:
+        condition_values = [{"userEnteredValue": option} for option in DASHBOARD_PERIOD_OPTIONS]
+        request_body = {
+            "requests": [
+                {
+                    "setDataValidation": {
+                        "range": {
+                            "sheetId": dashboard_sheet_id,
+                            "startRowIndex": 1,
+                            "endRowIndex": 2,
+                            "startColumnIndex": 1,
+                            "endColumnIndex": 2,
+                        },
+                        "rule": {
+                            "condition": {
+                                "type": "ONE_OF_LIST",
+                                "values": condition_values,
+                            },
+                            "inputMessage": "Select dashboard period",
+                            "strict": True,
+                            "showCustomUi": True,
+                        },
+                    }
+                }
+            ]
+        }
+
+        async def _batch() -> dict[str, Any]:
+            request = self._sheets.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body=request_body,
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_batch)
+
+    async def _rebuild_dashboard_charts(self, *, sheet_id: str, dashboard_sheet_id: int) -> None:
+        async def _get() -> dict[str, Any]:
+            request = self._sheets.spreadsheets().get(
+                spreadsheetId=sheet_id,
+                fields="sheets(charts(chartId,position(sheetId)))",
+            )
+            return await asyncio.to_thread(request.execute)
+
+        metadata = await self._retry_http(_get)
+        delete_requests: list[dict[str, Any]] = []
+        for sheet in metadata.get("sheets", []):
+            for chart in sheet.get("charts", []):
+                position = chart.get("position", {})
+                if int(position.get("sheetId", -1)) != dashboard_sheet_id:
+                    continue
+                chart_id = chart.get("chartId")
+                if chart_id is None:
+                    continue
+                delete_requests.append({"deleteEmbeddedObject": {"objectId": int(chart_id)}})
+
+        pie_chart_request = {
+            "addChart": {
+                "chart": {
+                    "spec": {
+                        "title": "Category Breakdown",
+                        "pieChart": {
+                            "legendPosition": "RIGHT_LEGEND",
+                            "domain": {
+                                "sourceRange": {
+                                    "sources": [
+                                        {
+                                            "sheetId": dashboard_sheet_id,
+                                            "startRowIndex": 15,
+                                            "endRowIndex": 215,
+                                            "startColumnIndex": 0,
+                                            "endColumnIndex": 1,
+                                        }
+                                    ]
+                                }
+                            },
+                            "series": {
+                                "sourceRange": {
+                                    "sources": [
+                                        {
+                                            "sheetId": dashboard_sheet_id,
+                                            "startRowIndex": 15,
+                                            "endRowIndex": 215,
+                                            "startColumnIndex": 1,
+                                            "endColumnIndex": 2,
+                                        }
+                                    ]
+                                }
+                            },
+                        },
+                    },
+                    "position": {
+                        "overlayPosition": {
+                            "anchorCell": {
+                                "sheetId": dashboard_sheet_id,
+                                "rowIndex": 14,
+                                "columnIndex": 5,
+                            },
+                            "offsetXPixels": 10,
+                            "offsetYPixels": 10,
+                            "widthPixels": 520,
+                            "heightPixels": 330,
+                        }
+                    },
+                }
+            }
+        }
+
+        trend_chart_request = {
+            "addChart": {
+                "chart": {
+                    "spec": {
+                        "title": "Monthly Spend Trend",
+                        "basicChart": {
+                            "chartType": "COLUMN",
+                            "legendPosition": "NO_LEGEND",
+                            "axis": [
+                                {"position": "BOTTOM_AXIS", "title": "Month"},
+                                {"position": "LEFT_AXIS", "title": "Amount"},
+                            ],
+                            "domains": [
+                                {
+                                    "domain": {
+                                        "sourceRange": {
+                                            "sources": [
+                                                {
+                                                    "sheetId": dashboard_sheet_id,
+                                                    "startRowIndex": 15,
+                                                    "endRowIndex": 215,
+                                                    "startColumnIndex": 3,
+                                                    "endColumnIndex": 4,
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ],
+                            "series": [
+                                {
+                                    "series": {
+                                        "sourceRange": {
+                                            "sources": [
+                                                {
+                                                    "sheetId": dashboard_sheet_id,
+                                                    "startRowIndex": 15,
+                                                    "endRowIndex": 215,
+                                                    "startColumnIndex": 4,
+                                                    "endColumnIndex": 5,
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "targetAxis": "LEFT_AXIS",
+                                }
+                            ],
+                            "headerCount": 0,
+                        },
+                    },
+                    "position": {
+                        "overlayPosition": {
+                            "anchorCell": {
+                                "sheetId": dashboard_sheet_id,
+                                "rowIndex": 35,
+                                "columnIndex": 5,
+                            },
+                            "offsetXPixels": 10,
+                            "offsetYPixels": 10,
+                            "widthPixels": 520,
+                            "heightPixels": 330,
+                        }
+                    },
+                }
+            }
+        }
+
+        cashflow_chart_request = {
+            "addChart": {
+                "chart": {
+                    "spec": {
+                        "title": "Monthly Cashflow",
+                        "basicChart": {
+                            "chartType": "LINE",
+                            "legendPosition": "BOTTOM_LEGEND",
+                            "axis": [
+                                {"position": "BOTTOM_AXIS", "title": "Month"},
+                                {"position": "LEFT_AXIS", "title": "Amount"},
+                            ],
+                            "domains": [
+                                {
+                                    "domain": {
+                                        "sourceRange": {
+                                            "sources": [
+                                                {
+                                                    "sheetId": dashboard_sheet_id,
+                                                    "startRowIndex": 35,
+                                                    "endRowIndex": 215,
+                                                    "startColumnIndex": 0,
+                                                    "endColumnIndex": 1,
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ],
+                            "series": [
+                                {
+                                    "series": {
+                                        "sourceRange": {
+                                            "sources": [
+                                                {
+                                                    "sheetId": dashboard_sheet_id,
+                                                    "startRowIndex": 35,
+                                                    "endRowIndex": 215,
+                                                    "startColumnIndex": 1,
+                                                    "endColumnIndex": 2,
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "targetAxis": "LEFT_AXIS",
+                                },
+                                {
+                                    "series": {
+                                        "sourceRange": {
+                                            "sources": [
+                                                {
+                                                    "sheetId": dashboard_sheet_id,
+                                                    "startRowIndex": 35,
+                                                    "endRowIndex": 215,
+                                                    "startColumnIndex": 2,
+                                                    "endColumnIndex": 3,
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "targetAxis": "LEFT_AXIS",
+                                },
+                                {
+                                    "series": {
+                                        "sourceRange": {
+                                            "sources": [
+                                                {
+                                                    "sheetId": dashboard_sheet_id,
+                                                    "startRowIndex": 35,
+                                                    "endRowIndex": 215,
+                                                    "startColumnIndex": 3,
+                                                    "endColumnIndex": 4,
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "targetAxis": "LEFT_AXIS",
+                                },
+                            ],
+                            "headerCount": 0,
+                        },
+                    },
+                    "position": {
+                        "overlayPosition": {
+                            "anchorCell": {
+                                "sheetId": dashboard_sheet_id,
+                                "rowIndex": 69,
+                                "columnIndex": 5,
+                            },
+                            "offsetXPixels": 10,
+                            "offsetYPixels": 10,
+                            "widthPixels": 520,
+                            "heightPixels": 330,
+                        }
+                    },
+                }
+            }
+        }
+
+        all_requests = [
+            *delete_requests,
+            pie_chart_request,
+            trend_chart_request,
+            cashflow_chart_request,
+        ]
+
+        async def _batch() -> dict[str, Any]:
+            request = self._sheets.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={"requests": all_requests},
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_batch)
 
     def _build_permission_hint(self, *, folder_id: str | None, http_error: HttpError) -> str:
         if folder_id:
@@ -572,4 +1251,42 @@ class GoogleSheetsGateway:
             )
             return await asyncio.to_thread(request.execute)
 
+        await self._retry_http(_update)
+
+    async def _replace_rows_with_header(
+        self,
+        *,
+        sheet_id: str,
+        tab_name: str,
+        headers: list[str],
+        rows: list[list[str]],
+    ) -> None:
+        values = [headers, *rows] if rows else [headers]
+
+        async def _clear() -> dict[str, Any]:
+            request = (
+                self._sheets.spreadsheets()
+                .values()
+                .clear(
+                    spreadsheetId=sheet_id,
+                    range=f"{tab_name}!A:ZZZ",
+                    body={},
+                )
+            )
+            return await asyncio.to_thread(request.execute)
+
+        async def _update() -> dict[str, Any]:
+            request = (
+                self._sheets.spreadsheets()
+                .values()
+                .update(
+                    spreadsheetId=sheet_id,
+                    range=f"{tab_name}!A1",
+                    valueInputOption="RAW",
+                    body={"values": values},
+                )
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_clear)
         await self._retry_http(_update)

@@ -5,6 +5,8 @@ services:
       dockerfile: docker/Dockerfile.bot
     env_file:
       - .env
+    environment:
+      MIGRATE_ON_START: "1"
     volumes:
       - ./:/app
       - ./data:/app/data
@@ -20,6 +22,8 @@ services:
       dockerfile: docker/Dockerfile.worker
     env_file:
       - .env
+    environment:
+      MIGRATE_ON_START: "0"
     volumes:
       - ./:/app
       - ./data:/app/data

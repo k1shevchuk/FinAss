@@ -29,6 +29,8 @@ class FamiliesRepo:
             default_currency=default_currency,
             timezone=timezone,
             rounding_mode=rounding_mode,
+            main_balance=0.0,
+            savings_balance=0.0,
         )
         self.session.add(family)
         await self.session.flush()

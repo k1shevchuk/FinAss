@@ -46,7 +46,7 @@ class StubSecret:
 
 @dataclass
 class StubSettings:
-    default_timezone: str = "Europe/Moscow"
+    default_timezone: str = "Europe/Berlin"
     default_currency: str = "RUB"
     default_rounding_mode: str = "HALF_UP"
     invite_ttl_seconds: int = 3600

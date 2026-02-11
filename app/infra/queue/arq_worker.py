@@ -5,7 +5,12 @@ from app.config.settings import Settings, get_settings
 from app.infra.google.drive_sharing import DriveSharing
 from app.infra.google.google_client_factory import GoogleClientFactory
 from app.infra.google.sheets_gateway import GoogleSheetsGateway
-from app.infra.queue.arq_jobs import append_audit_job, append_expenses_job, sync_users_sheet_job
+from app.infra.queue.arq_jobs import (
+    append_audit_job,
+    append_expenses_job,
+    append_ledger_job,
+    sync_users_sheet_job,
+)
 
 logger = get_logger(__name__)
 
@@ -37,7 +42,7 @@ async def shutdown(ctx: dict[str, object]) -> None:
 class WorkerSettings:
     settings: Settings = get_settings()
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    functions = [append_expenses_job, append_audit_job, sync_users_sheet_job]
+    functions = [append_expenses_job, append_audit_job, append_ledger_job, sync_users_sheet_job]
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 50

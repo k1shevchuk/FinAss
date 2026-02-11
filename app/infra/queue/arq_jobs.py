@@ -23,6 +23,13 @@ async def append_audit_job(ctx: dict[str, Any], sheet_id: str, rows: list[list[s
     return int(result.updated_rows)
 
 
+async def append_ledger_job(ctx: dict[str, Any], sheet_id: str, rows: list[list[str]]) -> int:
+    gateway = ctx["sheets_gateway"]
+    result = await gateway.append_ledger(sheet_id=sheet_id, rows=rows)
+    logger.info("jobs.append_ledger.done", sheet_id=sheet_id, updated_rows=result.updated_rows)
+    return int(result.updated_rows)
+
+
 async def sync_users_sheet_job(ctx: dict[str, Any], sheet_id: str, rows: list[list[str]]) -> int:
     gateway = ctx["sheets_gateway"]
     result = await gateway.append_users(sheet_id=sheet_id, rows=rows)

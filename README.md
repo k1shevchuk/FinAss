@@ -2,31 +2,36 @@
 
 Production-grade Telegram-бот для учета личных/семейных расходов:
 - ручной ввод трат и fallback-обработка чека по QR;
-- Google Sheets как пользовательский ledger;
-- SQLite (dev) / PostgreSQL (prod) для метаданных;
+- учет балансов (основной и накопительный счет);
+- SQL (SQLite dev / PostgreSQL prod) как primary-хранилище операций;
+- Google Sheets как пользовательская витрина/выгрузка и dashboard;
 - Redis для rate limit, кэша и очереди задач (ARQ worker).
 
 ## Архитектура
 
-- `bot` (`aiogram v3`): команды, FSM, inline UX.
+- `bot` (`aiogram v3`): кнопочный UX (reply + inline), FSM, fallback-команды.
 - `worker` (`arq`): запись батчей в Google Sheets и аудит.
 - `api` (`FastAPI`): webhook endpoint, health, metrics.
-- `db` (`SQLAlchemy + Alembic`): семьи, роли, invite, idempotency, audit.
-- `google` (`Sheets API + Drive API`): создание/шаринг таблицы и записи.
+- `db` (`SQLAlchemy + Alembic`): семьи, роли, invite, idempotency, audit, expense/ledger history.
+- `google` (`Sheets API + Drive API`): подключение таблицы, синхронизация projection и dashboard.
 
 ## Ключевые решения v1
 
 - Только Service Account flow (без OAuth пользователя).
+- Только подключение существующей таблицы (без функции "создать таблицу").
 - Роли: `owner`, `editor`.
 - Invite-only join: `/join <code>`, TTL 1 час, одноразовый.
 - Private chat only.
 - Fallback-only для receipt provider (без внешних поставщиков позиций чека).
+- Изменение балансов (`пополнить`/`перевести в накопления`) разрешено только `owner`.
 
 ## Быстрый старт (Windows 11 + Docker Desktop)
 
 1. Скопируйте `.env.example` в `.env` и заполните значения.
 2. Подготовьте Google credentials JSON и укажите путь в `GOOGLE_SERVICE_ACCOUNT_JSON_PATH`.
-3. Запустите:
+3. В вашей Google Таблице добавьте Editor-доступ для:
+   - `hydra-950@finassbobot.iam.gserviceaccount.com`
+4. Запустите:
 
 ```bash
 docker compose up --build
@@ -65,24 +70,16 @@ docker compose up --build
 - проксируйте на `bot:8000` через nginx/caddy + TLS.
 - webhook endpoint: `POST /telegram/webhook`.
 
-## Команды
+## Навигация
 
-- `/start` — онбординг, создание и шаринг таблицы.
-- `/help`
-- `/add` — пошаговый ручной ввод.
-- `/scan` — пришлите фото чека с QR.
-- `/report` — week/month/year.
-- `/categories` — список/редактирование категорий.
-- `/family` — list/invite/remove.
-- `/join <код>` — вступить по инвайту.
-- `/settings` — currency/timezone/rounding.
-- `/cancel`
+- Основной сценарий полностью на кнопках (RU): после нажатия `Start` в Telegram дальше можно работать без ввода `/команд`.
+- Команды оставлены как технический fallback: `/start`, `/help`, `/add`, `/scan`, `/report`, `/accounts`, `/categories`, `/family`, `/join <код>`, `/settings`, `/cancel`.
 
 ## Пример UX сообщений
 
-### `/start`
+### Старт
 
-`Привет! Я создам Google-таблицу... Отправьте email Google для шаринга.`
+`Привет! ... Выберите действие: [Подключить таблицу] [Подключиться по коду]`
 
 ### `/add`
 
@@ -115,6 +112,7 @@ docker compose up --build
 - `LOG_LEVEL`
 - `DEFAULT_CURRENCY`
 - `DEFAULT_TIMEZONE`
+  - по умолчанию: `Europe/Berlin`
 
 Полный список: `.env.example`.
 
@@ -141,6 +139,8 @@ make typecheck
 alembic upgrade head
 ```
 
+В Docker Compose миграции запускаются автоматически в `bot` контейнере (`MIGRATE_ON_START=1`).
+
 ## Security notes
 
 - Секреты не хранятся в репозитории.
@@ -159,6 +159,6 @@ alembic upgrade head
 
 - `403 webhook`: проверьте `WEBHOOK_SECRET_TOKEN`.
 - `Google 403`: проверьте API enablement, SA credentials и права Drive.
+- `Google 403` при подключении: таблица должна быть расшарена на `hydra-950@finassbobot.iam.gserviceaccount.com` с ролью Editor.
 - `QR не найден`: улучшите резкость/контраст фото, уберите блики.
-- `Сначала выполните /start`: профиль/семья еще не инициализированы.
-
+- `Сначала подключите таблицу`: профиль/семья еще не инициализированы.

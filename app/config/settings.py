@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     redis_url: str = Field(alias="REDIS_URL")
 
     default_currency: str = Field(default="RUB", alias="DEFAULT_CURRENCY")
-    default_timezone: str = Field(default="Europe/Moscow", alias="DEFAULT_TIMEZONE")
+    default_timezone: str = Field(default="Europe/Berlin", alias="DEFAULT_TIMEZONE")
     default_rounding_mode: str = Field(default="HALF_UP", alias="DEFAULT_ROUNDING_MODE")
 
     invite_ttl_seconds: int = Field(default=3600, alias="INVITE_TTL_SECONDS")

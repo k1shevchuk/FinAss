@@ -6,18 +6,18 @@ from tests.integration.conftest import FakeSheetsGateway, StubSettings
 
 
 @pytest.mark.asyncio
-async def test_onboarding_creates_sheet_and_family(session_factory) -> None:
+async def test_onboarding_attaches_sheet_and_creates_family(session_factory) -> None:
     service = OnboardingService(
         session_factory=session_factory,
         sheets_gateway=FakeSheetsGateway(),  # type: ignore[arg-type]
         settings=StubSettings(),  # type: ignore[arg-type]
     )
-    sheet_id, sheet_url = await service.ensure_user_and_family(
+    sheet_id, sheet_url = await service.attach_existing_spreadsheet(
         telegram_id=1001,
         username="user1001",
         display_name="User One",
         language_code="ru",
-        google_share_email="name@gmail.com",
+        sheet_id="sheet-1001",
     )
     assert sheet_id == "sheet-1001"
     assert "docs.google.com" in sheet_url
@@ -27,4 +27,3 @@ async def test_onboarding_creates_sheet_and_family(session_factory) -> None:
         await session.commit()
         assert family is not None
         assert family.sheet_id == sheet_id
-

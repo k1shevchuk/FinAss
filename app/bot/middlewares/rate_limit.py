@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
+from app.bot.keyboards.menu import BTN_SCAN
 from app.utils.rate_limit import LimitWindow, RedisRateLimiter
 
 
@@ -47,7 +48,7 @@ class RateLimitMiddleware(BaseMiddleware):
                 await message.answer("Слишком много запросов. Попробуйте через минуту.")
                 return None
 
-            if message.text and message.text.startswith("/scan"):
+            if message.text and (message.text.startswith("/scan") or message.text == BTN_SCAN):
                 scan_window = LimitWindow(
                     key=f"scan:{message.from_user.id}",
                     limit=self._scan_limit,

@@ -19,12 +19,12 @@ async def test_add_manual_expense_enqueue(session_factory) -> None:
         sheets_gateway=FakeSheetsGateway(),  # type: ignore[arg-type]
         settings=settings,  # type: ignore[arg-type]
     )
-    await onboarding.ensure_user_and_family(
+    await onboarding.attach_existing_spreadsheet(
         telegram_id=1,
         username="owner",
         display_name="Owner",
         language_code="ru",
-        google_share_email="owner@gmail.com",
+        sheet_id="sheet-1",
     )
     audit = AuditService(session_factory=session_factory, queue=queue)  # type: ignore[arg-type]
     service = ExpenseService(session_factory=session_factory, queue=queue, audit_service=audit)  # type: ignore[arg-type]

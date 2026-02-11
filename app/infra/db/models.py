@@ -52,6 +52,11 @@ class Family(Base):
     default_currency: Mapped[str] = mapped_column(String(8), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     rounding_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    main_balance: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0.0)
+    savings_balance: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0.0)
+    balances_updated_at_utc: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     members: Mapped[list["FamilyMember"]] = relationship(back_populates="family")
@@ -139,3 +144,57 @@ class IdempotencyKey(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     expires_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExpenseEntry(Base):
+    __tablename__ = "expense_entries"
+    __table_args__ = (
+        Index("ix_expense_entries_family_id", "family_id"),
+        Index("ix_expense_entries_owner_telegram_id", "owner_telegram_id"),
+        Index("ix_expense_entries_created_at_utc", "created_at_utc"),
+        Index("ix_expense_entries_family_created", "family_id", "created_at_utc"),
+        Index("ix_expense_entries_receipt_hash", "receipt_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    expense_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    local_datetime: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    owner_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    family_id: Mapped[UUID] = mapped_column(ForeignKey("families.family_id"), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    receipt_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    item_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
+    unit_price: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    total_price: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    category: Mapped[str] = mapped_column(String(128), nullable=False)
+    merchant: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+
+class LedgerEntry(Base):
+    __tablename__ = "ledger_entries"
+    __table_args__ = (
+        Index("ix_ledger_entries_family_id", "family_id"),
+        Index("ix_ledger_entries_owner_telegram_id", "owner_telegram_id"),
+        Index("ix_ledger_entries_at_utc", "at_utc"),
+        Index("ix_ledger_entries_family_at", "family_id", "at_utc"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entry_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    local_datetime: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    owner_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    family_id: Mapped[UUID] = mapped_column(ForeignKey("families.family_id"), nullable=False)
+    type: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(1024), nullable=True)
