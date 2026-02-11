@@ -1,0 +1,83 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "expense-tracker-bot"
+version = "0.1.0"
+description = "Production-grade Telegram expense tracker with Google Sheets ledger"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Expense Tracker Team" }]
+dependencies = [
+  "aiogram>=3.15.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "redis>=5.2.0",
+  "arq>=0.26.0",
+  "sqlalchemy[asyncio]>=2.0.36",
+  "alembic>=1.14.0",
+  "aiosqlite>=0.20.0",
+  "asyncpg>=0.30.0",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.6.0",
+  "google-api-python-client>=2.153.0",
+  "google-auth>=2.36.0",
+  "google-auth-httplib2>=0.2.0",
+  "opencv-python-headless>=4.10.0.84",
+  "numpy>=2.1.0",
+  "structlog>=24.4.0",
+  "prometheus-client>=0.21.0",
+  "sentry-sdk[fastapi]>=2.19.0",
+  "python-dateutil>=2.9.0.post0",
+  "email-validator>=2.2.0",
+  "orjson>=3.10.0",
+  "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "pytest-mock>=3.14.0",
+  "pytest-cov>=6.0.0",
+  "mypy>=1.13.0",
+  "ruff>=0.7.0",
+  "qrcode[pil]>=8.0",
+  "types-python-dateutil>=2.9.0.20241206",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "N", "SIM", "S"]
+ignore = ["S101", "B008", "E501", "S104", "S311", "UP047"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = false
+strict_equality = true
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+exclude = ["alembic/versions/"]
+
+[tool.pytest.ini_options]
+addopts = "-q --disable-warnings"
+testpaths = ["tests"]
+asyncio_mode = "auto"

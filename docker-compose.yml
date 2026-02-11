@@ -1,0 +1,52 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+      - ./data:/app/data
+      - ./app/secrets:/run/secrets:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+    command: ["python", "-m", "app.main"]
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+      - ./data:/app/data
+      - ./app/secrets:/run/secrets:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker_main"]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["prod"]
+    environment:
+      POSTGRES_DB: expense
+      POSTGRES_USER: expense
+      POSTGRES_PASSWORD: expense
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

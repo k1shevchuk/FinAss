@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual env
+.venv/
+venv/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Runtime data
+data/
+tmp/
+*.db
+*.sqlite
+*.sqlite3
+logs/
+app/secrets/*.json
+
+# Docker
+*.pid
