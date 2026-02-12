@@ -14,6 +14,8 @@ Production-grade Telegram-бот для учета личных/семейных
 - `api` (`FastAPI`): webhook endpoint, health, metrics.
 - `db` (`SQLAlchemy + Alembic`): семьи, роли, invite, idempotency, audit, expense/ledger history.
 - `google` (`Sheets API + Drive API`): подключение таблицы, синхронизация projection и dashboard.
+  - Пользователь видит только 2 вкладки: `Сводка` и `Покупки`.
+  - Технические вкладки (`raw_expenses`, `settings`, `ledger`, `categories`, `users`, `audit`) скрыты.
 
 ## Ключевые решения v1
 
@@ -55,6 +57,19 @@ docker compose up --build
 
 1. Создайте бота через BotFather.
 2. Укажите `TELEGRAM_BOT_TOKEN` в `.env`.
+
+## Receipt provider: где взять API token
+
+Для автоподтягивания товарных позиций из QR (не только суммы) нужен внешний провайдер.
+
+1. Зарегистрируйтесь на `https://proverkacheka.com`.
+2. В личном кабинете получите API token.
+3. Добавьте в `.env`:
+   - `RECEIPT_ITEMS_PROVIDER=proverkacheka`
+   - `RECEIPT_PROVIDER_API_TOKEN=<ваш_токен>`
+4. Перезапустите контейнеры: `docker compose up -d --build bot worker`.
+
+Если токена нет или сервис временно недоступен, бот автоматически переключится на fallback-сценарий.
 
 ## Режимы запуска
 

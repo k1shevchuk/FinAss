@@ -197,7 +197,7 @@ async def scan_receive_photo(message: Message, state: FSMContext, services: AppS
     )
     await message.answer(
         "Чек распознан.\n"
-        f"Payload: {result.payload_preview}\n"
+        f"QR: {result.payload_preview}\n"
         f"Сумма: {total_label}\n\n"
         "Автоматически получить товарные позиции не удалось. Выберите сценарий:",
         reply_markup=fallback_choice_keyboard(),
@@ -589,6 +589,8 @@ async def _normalize_receipt_items(
     fallback_category = "Другое" if "Другое" in categories else (categories[0] if categories else "Другое")
     for item in items:
         category = item.category if item.category in categories else None
+        if category and _is_other_category(category):
+            category = None
         if not category:
             suggested = await services.category_matcher.match(actor_id=actor_id, text=item.name)
             if suggested and suggested in categories:
@@ -651,3 +653,8 @@ def _format_items_preview(items: list[ReceiptItem], *, limit: int = 8) -> str:
     if len(items) > limit:
         lines.append(f"... и еще {len(items) - limit} поз.")
     return "\n".join(lines)
+
+
+def _is_other_category(value: str) -> bool:
+    normalized = value.casefold().strip()
+    return normalized in {"другое", "other", "misc", "miscellaneous", "разное"}

@@ -58,7 +58,7 @@ class SettingsService:
             families_repo = FamiliesRepo(session)
             family = await families_repo.get_family_for_actor(actor_id)
             if not family:
-                raise ValueError("Family is not initialized. Use /start first.")
+                raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
             sheet_id = family.sheet_id
             if key == "currency":
                 family.default_currency = value

@@ -42,12 +42,12 @@ class FamilyService:
             families_repo = FamiliesRepo(session)
             family = await families_repo.get_family_for_actor(owner_id)
             if not family:
-                raise ValueError("Family not found.")
+                raise ValueError("Семья не найдена.")
             membership = await families_repo.get_membership(
                 family_id=family.family_id, telegram_id=owner_id
             )
             if not membership or membership.role != MembershipRole.OWNER.value:
-                raise PermissionError("Only owner can create invites.")
+                raise PermissionError("Только владелец семьи может создавать приглашения.")
 
             code = secrets.token_urlsafe(9)
             code_hash = hash_invite_code(code, self._pepper)
@@ -90,7 +90,7 @@ class FamilyService:
 
             invite = await invites_repo.get_active_by_hash(code_hash=code_hash, now_utc=now_utc)
             if not invite:
-                raise ValueError("Invite code is invalid or expired.")
+                raise ValueError("Код приглашения недействителен или уже истек.")
 
             await users_repo.upsert_user(
                 telegram_id=actor_id,
@@ -110,7 +110,7 @@ class FamilyService:
             family = await families_repo.get_by_family_id(invite.family_id)
             await session.commit()
             if not family:
-                raise ValueError("Family missing.")
+                raise ValueError("Семья не найдена.")
 
         await self._audit_service.log(
             family_id=family.family_id,
@@ -126,14 +126,14 @@ class FamilyService:
             families_repo = FamiliesRepo(session)
             family = await families_repo.get_family_for_actor(owner_id)
             if not family:
-                raise ValueError("Family not found.")
+                raise ValueError("Семья не найдена.")
             owner_membership = await families_repo.get_membership(
                 family_id=family.family_id, telegram_id=owner_id
             )
             if not owner_membership or owner_membership.role != MembershipRole.OWNER.value:
-                raise PermissionError("Only owner can remove members.")
+                raise PermissionError("Только владелец семьи может удалять участников.")
             if member_telegram_id == owner_id:
-                raise ValueError("Owner cannot remove themselves.")
+                raise ValueError("Владелец не может удалить самого себя.")
             removed = await families_repo.remove_member(
                 family_id=family.family_id, telegram_id=member_telegram_id
             )

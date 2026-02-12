@@ -17,14 +17,23 @@ from app.domain.entities import (
 from app.infra.google.drive_sharing import DriveSharing
 from app.infra.google.template_builder import (
     AUDIT_HEADERS,
+    AUDIT_TAB,
     CATEGORIES_HEADERS,
+    CATEGORIES_TAB,
     DASHBOARD_BATCH_VALUES,
     DASHBOARD_PERIOD_OPTIONS,
+    DASHBOARD_TAB,
     DASHBOARD_VERSION,
     EXPENSES_HEADERS,
+    EXPENSES_TAB,
     LEDGER_HEADERS,
+    LEDGER_TAB,
+    RAW_EXPENSES_TAB,
     SETTINGS_HEADERS,
+    SETTINGS_TAB,
+    USER_EXPENSES_HEADERS,
     USERS_HEADERS,
+    USERS_TAB,
     default_categories,
 )
 from app.utils.retry import retry_async
@@ -90,7 +99,7 @@ class GoogleSheetsGateway:
                 .values()
                 .append(
                     spreadsheetId=sheet_id,
-                    range="expenses!A1",
+                    range=f"{RAW_EXPENSES_TAB}!A1",
                     valueInputOption="USER_ENTERED",
                     insertDataOption="INSERT_ROWS",
                     body=body,
@@ -113,7 +122,7 @@ class GoogleSheetsGateway:
                 .values()
                 .append(
                     spreadsheetId=sheet_id,
-                    range="audit!A1",
+                    range=f"{AUDIT_TAB}!A1",
                     valueInputOption="USER_ENTERED",
                     insertDataOption="INSERT_ROWS",
                     body=body,
@@ -136,7 +145,7 @@ class GoogleSheetsGateway:
                 .values()
                 .append(
                     spreadsheetId=sheet_id,
-                    range="ledger!A1",
+                    range=f"{LEDGER_TAB}!A1",
                     valueInputOption="USER_ENTERED",
                     insertDataOption="INSERT_ROWS",
                     body=body,
@@ -168,7 +177,7 @@ class GoogleSheetsGateway:
                 .values()
                 .append(
                     spreadsheetId=sheet_id,
-                    range="users!A1",
+                    range=f"{USERS_TAB}!A1",
                     valueInputOption="USER_ENTERED",
                     insertDataOption="INSERT_ROWS",
                     body=body,
@@ -185,7 +194,7 @@ class GoogleSheetsGateway:
             request = (
                 self._sheets.spreadsheets()
                 .values()
-                .get(spreadsheetId=sheet_id, range="categories!A2:C")
+                .get(spreadsheetId=sheet_id, range=f"{CATEGORIES_TAB}!A2:C")
             )
             return await asyncio.to_thread(request.execute)
 
@@ -211,7 +220,7 @@ class GoogleSheetsGateway:
             request = (
                 self._sheets.spreadsheets()
                 .values()
-                .get(spreadsheetId=sheet_id, range="settings!A2:B")
+                .get(spreadsheetId=sheet_id, range=f"{SETTINGS_TAB}!A2:B")
             )
             return await asyncio.to_thread(request.execute)
 
@@ -226,7 +235,7 @@ class GoogleSheetsGateway:
     async def set_setting(self, *, sheet_id: str, key: str, value: str) -> None:
         settings = await self.get_settings(sheet_id=sheet_id)
         if key in settings:
-            rows = await self._read_range(sheet_id=sheet_id, range_name="settings!A2:B")
+            rows = await self._read_range(sheet_id=sheet_id, range_name=f"{SETTINGS_TAB}!A2:B")
             row_index = 2
             for row in rows:
                 if len(row) > 0 and str(row[0]) == key:
@@ -234,27 +243,27 @@ class GoogleSheetsGateway:
                 row_index += 1
             await self._update_single_cell(
                 sheet_id=sheet_id,
-                range_name=f"settings!B{row_index}",
+                range_name=f"{SETTINGS_TAB}!B{row_index}",
                 value=value,
             )
             return
-        await self._append_rows(sheet_id=sheet_id, range_name="settings!A1", rows=[[key, value]])
+        await self._append_rows(sheet_id=sheet_id, range_name=f"{SETTINGS_TAB}!A1", rows=[[key, value]])
 
     async def add_category(self, *, sheet_id: str, category: str, keywords: list[str]) -> None:
         await self._append_rows(
             sheet_id=sheet_id,
-            range_name="categories!A1",
+            range_name=f"{CATEGORIES_TAB}!A1",
             rows=[[category, ", ".join(keywords), "true"]],
         )
 
     async def set_category_enabled(self, *, sheet_id: str, category: str, enabled: bool) -> bool:
-        rows = await self._read_range(sheet_id=sheet_id, range_name="categories!A2:C")
+        rows = await self._read_range(sheet_id=sheet_id, range_name=f"{CATEGORIES_TAB}!A2:C")
         row_index = 2
         for row in rows:
             if len(row) > 0 and str(row[0]).strip() == category:
                 await self._update_single_cell(
                     sheet_id=sheet_id,
-                    range_name=f"categories!C{row_index}",
+                    range_name=f"{CATEGORIES_TAB}!C{row_index}",
                     value="true" if enabled else "false",
                 )
                 return True
@@ -266,11 +275,26 @@ class GoogleSheetsGateway:
             request = (
                 self._sheets.spreadsheets()
                 .values()
-                .get(spreadsheetId=sheet_id, range="expenses!A1:R")
+                .get(spreadsheetId=sheet_id, range=f"{RAW_EXPENSES_TAB}!A1:R")
             )
             return await asyncio.to_thread(request.execute)
 
-        result = await self._retry_http(_read)
+        try:
+            result = await self._retry_http(_read)
+        except HttpError as exc:
+            # Backward compatibility for old sheets where full data was stored in "expenses".
+            if getattr(exc.resp, "status", None) != 400:
+                raise
+
+            async def _read_legacy() -> dict[str, Any]:
+                request = (
+                    self._sheets.spreadsheets()
+                    .values()
+                    .get(spreadsheetId=sheet_id, range=f"{EXPENSES_TAB}!A1:R")
+                )
+                return await asyncio.to_thread(request.execute)
+
+            result = await self._retry_http(_read_legacy)
         values = result.get("values", [])
         if not values:
             return []
@@ -290,7 +314,7 @@ class GoogleSheetsGateway:
             request = (
                 self._sheets.spreadsheets()
                 .values()
-                .get(spreadsheetId=sheet_id, range="ledger!A1:J")
+                .get(spreadsheetId=sheet_id, range=f"{LEDGER_TAB}!A1:J")
             )
             return await asyncio.to_thread(request.execute)
 
@@ -317,46 +341,53 @@ class GoogleSheetsGateway:
     async def purge_actor_data(self, *, sheet_id: str, actor_telegram_id: int) -> None:
         actor = str(actor_telegram_id)
 
-        expense_rows = await self._read_range(sheet_id=sheet_id, range_name="expenses!A2:R")
+        expense_rows = await self._read_range(sheet_id=sheet_id, range_name=f"{RAW_EXPENSES_TAB}!A2:R")
         filtered_expenses = [
             row for row in expense_rows if len(row) <= 4 or str(row[4]).strip() != actor
         ]
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="expenses",
+            tab_name=RAW_EXPENSES_TAB,
             headers=EXPENSES_HEADERS,
             rows=filtered_expenses,
         )
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name=EXPENSES_TAB,
+            headers=USER_EXPENSES_HEADERS,
+            rows=[],
+        )
+        await self._write_expenses_projection(sheet_id=sheet_id)
 
-        users_rows = await self._read_range(sheet_id=sheet_id, range_name="users!A2:D")
+        users_rows = await self._read_range(sheet_id=sheet_id, range_name=f"{USERS_TAB}!A2:D")
         filtered_users = [
             row for row in users_rows if len(row) == 0 or str(row[0]).strip() != actor
         ]
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="users",
+            tab_name=USERS_TAB,
             headers=USERS_HEADERS,
             rows=filtered_users,
         )
 
-        audit_rows = await self._read_range(sheet_id=sheet_id, range_name="audit!A2:D")
+        audit_rows = await self._read_range(sheet_id=sheet_id, range_name=f"{AUDIT_TAB}!A2:D")
         filtered_audit = [
             row for row in audit_rows if len(row) <= 1 or str(row[1]).strip() != actor
         ]
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="audit",
+            tab_name=AUDIT_TAB,
             headers=AUDIT_HEADERS,
             rows=filtered_audit,
         )
 
-        ledger_rows = await self._read_range(sheet_id=sheet_id, range_name="ledger!A2:J")
+        ledger_rows = await self._read_range(sheet_id=sheet_id, range_name=f"{LEDGER_TAB}!A2:J")
         filtered_ledger = [
             row for row in ledger_rows if len(row) <= 4 or str(row[4]).strip() != actor
         ]
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="ledger",
+            tab_name=LEDGER_TAB,
             headers=LEDGER_HEADERS,
             rows=filtered_ledger,
         )
@@ -369,25 +400,31 @@ class GoogleSheetsGateway:
 
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="expenses",
+            tab_name=RAW_EXPENSES_TAB,
             headers=EXPENSES_HEADERS,
             rows=[],
         )
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="users",
+            tab_name=EXPENSES_TAB,
+            headers=USER_EXPENSES_HEADERS,
+            rows=[],
+        )
+        await self._replace_rows_with_header(
+            sheet_id=sheet_id,
+            tab_name=USERS_TAB,
             headers=USERS_HEADERS,
             rows=[],
         )
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="audit",
+            tab_name=AUDIT_TAB,
             headers=AUDIT_HEADERS,
             rows=[],
         )
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="ledger",
+            tab_name=LEDGER_TAB,
             headers=LEDGER_HEADERS,
             rows=[],
         )
@@ -397,13 +434,13 @@ class GoogleSheetsGateway:
         ]
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="categories",
+            tab_name=CATEGORIES_TAB,
             headers=CATEGORIES_HEADERS,
             rows=default_category_rows,
         )
         await self._replace_rows_with_header(
             sheet_id=sheet_id,
-            tab_name="settings",
+            tab_name=SETTINGS_TAB,
             headers=SETTINGS_HEADERS,
             rows=[
                 ["currency", currency],
@@ -415,19 +452,21 @@ class GoogleSheetsGateway:
                 ["dashboard_version", DASHBOARD_VERSION],
             ],
         )
+        await self._write_expenses_projection(sheet_id=sheet_id)
         await self._write_dashboard(sheet_id=sheet_id)
 
     async def _write_template(self, *, sheet_id: str, owner: OwnerContext) -> None:
         headers_body = {
             "valueInputOption": "RAW",
             "data": [
-                {"range": "dashboard!A1:D1", "values": [["Expense Tracker Dashboard", "", "", ""]]},
-                {"range": "expenses!A1:R1", "values": [EXPENSES_HEADERS]},
-                {"range": "categories!A1:C1", "values": [CATEGORIES_HEADERS]},
-                {"range": "users!A1:D1", "values": [USERS_HEADERS]},
-                {"range": "settings!A1:B1", "values": [SETTINGS_HEADERS]},
-                {"range": "audit!A1:D1", "values": [AUDIT_HEADERS]},
-                {"range": "ledger!A1:J1", "values": [LEDGER_HEADERS]},
+                {"range": f"{DASHBOARD_TAB}!A1:H1", "values": [["Сводка расходов семьи", "", "", "", "", "", "", ""]]},
+                {"range": f"{EXPENSES_TAB}!A1:E1", "values": [USER_EXPENSES_HEADERS]},
+                {"range": f"{RAW_EXPENSES_TAB}!A1:R1", "values": [EXPENSES_HEADERS]},
+                {"range": f"{CATEGORIES_TAB}!A1:C1", "values": [CATEGORIES_HEADERS]},
+                {"range": f"{USERS_TAB}!A1:D1", "values": [USERS_HEADERS]},
+                {"range": f"{SETTINGS_TAB}!A1:B1", "values": [SETTINGS_HEADERS]},
+                {"range": f"{AUDIT_TAB}!A1:D1", "values": [AUDIT_HEADERS]},
+                {"range": f"{LEDGER_TAB}!A1:J1", "values": [LEDGER_HEADERS]},
             ],
         }
 
@@ -443,10 +482,14 @@ class GoogleSheetsGateway:
             return await asyncio.to_thread(request.execute)
 
         await self._retry_http(_batch_headers)
+        await self._ensure_spreadsheet_properties(sheet_id=sheet_id, timezone=owner.timezone)
+        await self._write_expenses_projection(sheet_id=sheet_id)
+        await self._format_expenses_sheet(sheet_id=sheet_id)
         await self._write_dashboard(sheet_id=sheet_id)
         await self._ensure_default_categories(sheet_id=sheet_id)
         await self._ensure_owner_row(sheet_id=sheet_id, owner=owner)
         await self._ensure_default_settings(sheet_id=sheet_id, owner=owner)
+        await self._apply_user_tab_visibility(sheet_id=sheet_id)
 
     async def _write_dashboard(self, *, sheet_id: str) -> None:
         async def _clear() -> dict[str, Any]:
@@ -455,7 +498,7 @@ class GoogleSheetsGateway:
                 .values()
                 .clear(
                     spreadsheetId=sheet_id,
-                    range="dashboard!A1:Z500",
+                    range=f"{DASHBOARD_TAB}!A1:Z500",
                     body={},
                 )
             )
@@ -464,7 +507,7 @@ class GoogleSheetsGateway:
         await self._retry_http(_clear)
         await self._batch_update_values(sheet_id=sheet_id, data=DASHBOARD_BATCH_VALUES)
         metadata = await self._get_spreadsheet_metadata(sheet_id=sheet_id)
-        dashboard_sheet_id = metadata["dashboard"]
+        dashboard_sheet_id = metadata[DASHBOARD_TAB]
         await self._format_dashboard(sheet_id=sheet_id, dashboard_sheet_id=dashboard_sheet_id)
         await self._set_dashboard_period_validation(
             sheet_id=sheet_id,
@@ -475,8 +518,177 @@ class GoogleSheetsGateway:
             dashboard_sheet_id=dashboard_sheet_id,
         )
 
+    async def _write_expenses_projection(self, *, sheet_id: str) -> None:
+        async def _clear() -> dict[str, Any]:
+            request = (
+                self._sheets.spreadsheets()
+                .values()
+                .clear(
+                    spreadsheetId=sheet_id,
+                    range=f"{EXPENSES_TAB}!A2:E5000",
+                    body={},
+                )
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_clear)
+        projection_formula = (
+            '=IFERROR(ARRAYFORMULA(FILTER({raw_expenses!K2:K,raw_expenses!L2:L,raw_expenses!M2:M,raw_expenses!F2:F,IFERROR(TEXT(DATEVALUE(LEFT(raw_expenses!C2:C,10)),"dd.mm.yyyy"),LEFT(raw_expenses!C2:C,10))},raw_expenses!K2:K<>"")),{"Нет данных","","","",""})'
+        )
+        await self._update_single_cell(
+            sheet_id=sheet_id,
+            range_name=f"{EXPENSES_TAB}!A2",
+            value=projection_formula,
+        )
+
+    async def _ensure_spreadsheet_properties(self, *, sheet_id: str, timezone: str) -> None:
+        async def _batch() -> dict[str, Any]:
+            request = self._sheets.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={
+                    "requests": [
+                        {
+                            "updateSpreadsheetProperties": {
+                                "properties": {
+                                    "locale": "en_US",
+                                    "timeZone": timezone,
+                                },
+                                "fields": "locale,timeZone",
+                            }
+                        }
+                    ]
+                },
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_batch)
+
+    async def _format_expenses_sheet(self, *, sheet_id: str) -> None:
+        metadata = await self._get_spreadsheet_metadata(sheet_id=sheet_id)
+        expenses_sheet_id = metadata.get(EXPENSES_TAB)
+        if expenses_sheet_id is None:
+            return
+        requests: list[dict[str, Any]] = [
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": expenses_sheet_id,
+                        "startRowIndex": 0,
+                        "endRowIndex": 1,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 5,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"bold": True},
+                            "backgroundColorStyle": {
+                                "rgbColor": {"red": 0.9, "green": 0.94, "blue": 1.0}
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
+                }
+            },
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": expenses_sheet_id,
+                        "gridProperties": {"frozenRowCount": 1},
+                    },
+                    "fields": "gridProperties.frozenRowCount",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": expenses_sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 0,
+                        "endIndex": 1,
+                    },
+                    "properties": {"pixelSize": 260},
+                    "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": expenses_sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 1,
+                        "endIndex": 4,
+                    },
+                    "properties": {"pixelSize": 160},
+                    "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": expenses_sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 4,
+                        "endIndex": 5,
+                    },
+                    "properties": {"pixelSize": 170},
+                    "fields": "pixelSize",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": expenses_sheet_id,
+                        "startRowIndex": 1,
+                        "endRowIndex": 5000,
+                        "startColumnIndex": 1,
+                        "endColumnIndex": 3,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}
+                        }
+                    },
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            },
+        ]
+
+        async def _batch() -> dict[str, Any]:
+            request = self._sheets.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={"requests": requests},
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_batch)
+
+    async def _apply_user_tab_visibility(self, *, sheet_id: str) -> None:
+        metadata = await self._get_spreadsheet_metadata(sheet_id=sheet_id)
+        requests: list[dict[str, Any]] = []
+        for title, tab_id in metadata.items():
+            hidden = title not in {DASHBOARD_TAB, EXPENSES_TAB}
+            requests.append(
+                {
+                    "updateSheetProperties": {
+                        "properties": {"sheetId": tab_id, "hidden": hidden},
+                        "fields": "hidden",
+                    }
+                }
+            )
+        if not requests:
+            return
+
+        async def _batch() -> dict[str, Any]:
+            request = self._sheets.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={"requests": requests},
+            )
+            return await asyncio.to_thread(request.execute)
+
+        await self._retry_http(_batch)
+
     async def _ensure_default_categories(self, *, sheet_id: str) -> None:
-        rows = await self._read_range(sheet_id=sheet_id, range_name="categories!A2:C")
+        rows = await self._read_range(sheet_id=sheet_id, range_name=f"{CATEGORIES_TAB}!A2:C")
         existing_categories = {
             str(row[0]).strip().casefold()
             for row in rows
@@ -491,19 +703,19 @@ class GoogleSheetsGateway:
             return
         await self._append_rows(
             sheet_id=sheet_id,
-            range_name="categories!A1",
+            range_name=f"{CATEGORIES_TAB}!A1",
             rows=rows_categories,
         )
 
     async def _ensure_owner_row(self, *, sheet_id: str, owner: OwnerContext) -> None:
-        rows = await self._read_range(sheet_id=sheet_id, range_name="users!A2:D")
+        rows = await self._read_range(sheet_id=sheet_id, range_name=f"{USERS_TAB}!A2:D")
         owner_id = str(owner.telegram_id)
         for row in rows:
             if len(row) > 0 and str(row[0]).strip() == owner_id:
                 return
         await self._append_rows(
             sheet_id=sheet_id,
-            range_name="users!A1",
+            range_name=f"{USERS_TAB}!A1",
             rows=[
                 [
                     owner_id,
@@ -530,7 +742,7 @@ class GoogleSheetsGateway:
                 continue
             await self._append_rows(
                 sheet_id=sheet_id,
-                range_name="settings!A1",
+                range_name=f"{SETTINGS_TAB}!A1",
                 rows=[[key, value]],
             )
 
@@ -538,13 +750,14 @@ class GoogleSheetsGateway:
         body = {
             "properties": {"title": title},
             "sheets": [
-                {"properties": {"title": "dashboard"}},
-                {"properties": {"title": "expenses"}},
-                {"properties": {"title": "categories"}},
-                {"properties": {"title": "users"}},
-                {"properties": {"title": "settings"}},
-                {"properties": {"title": "audit"}},
-                {"properties": {"title": "ledger"}},
+                {"properties": {"title": DASHBOARD_TAB}},
+                {"properties": {"title": EXPENSES_TAB}},
+                {"properties": {"title": RAW_EXPENSES_TAB}},
+                {"properties": {"title": CATEGORIES_TAB}},
+                {"properties": {"title": USERS_TAB}},
+                {"properties": {"title": SETTINGS_TAB}},
+                {"properties": {"title": AUDIT_TAB}},
+                {"properties": {"title": LEDGER_TAB}},
             ],
         }
 
@@ -635,22 +848,31 @@ class GoogleSheetsGateway:
                 first_sheet_id = int(props["sheetId"])
 
         requests: list[dict[str, Any]] = []
-        required = ["dashboard", "expenses", "categories", "users", "settings", "audit", "ledger"]
+        required = [
+            DASHBOARD_TAB,
+            EXPENSES_TAB,
+            RAW_EXPENSES_TAB,
+            CATEGORIES_TAB,
+            USERS_TAB,
+            SETTINGS_TAB,
+            AUDIT_TAB,
+            LEDGER_TAB,
+        ]
 
-        if "dashboard" not in titles:
+        if DASHBOARD_TAB not in titles:
             if rename_first_to_dashboard and first_sheet_id is not None:
                 requests.append(
                     {
                         "updateSheetProperties": {
-                            "properties": {"sheetId": first_sheet_id, "title": "dashboard"},
+                            "properties": {"sheetId": first_sheet_id, "title": DASHBOARD_TAB},
                             "fields": "title",
                         }
                     }
                 )
-                titles.add("dashboard")
+                titles.add(DASHBOARD_TAB)
             else:
-                requests.append({"addSheet": {"properties": {"title": "dashboard"}}})
-                titles.add("dashboard")
+                requests.append({"addSheet": {"properties": {"title": DASHBOARD_TAB}}})
+                titles.add(DASHBOARD_TAB)
 
         for tab in required:
             if tab in titles:
@@ -699,7 +921,7 @@ class GoogleSheetsGateway:
             raw_sheet_id = props.get("sheetId")
             if title and raw_sheet_id is not None:
                 mapping[title] = int(raw_sheet_id)
-        if "dashboard" not in mapping:
+        if DASHBOARD_TAB not in mapping:
             raise ValueError("Dashboard sheet not found")
         return mapping
 
@@ -712,15 +934,13 @@ class GoogleSheetsGateway:
                         "startRowIndex": 0,
                         "endRowIndex": 1,
                         "startColumnIndex": 0,
-                        "endColumnIndex": 4,
+                        "endColumnIndex": 8,
                     },
                     "cell": {
                         "userEnteredFormat": {
-                            "textFormat": {"bold": True, "fontSize": 16},
+                            "textFormat": {"bold": True, "fontSize": 18, "foregroundColor": {"red": 0.12, "green": 0.2, "blue": 0.32}},
                             "horizontalAlignment": "LEFT",
-                            "backgroundColorStyle": {
-                                "rgbColor": {"red": 0.89, "green": 0.95, "blue": 1.0}
-                            },
+                            "backgroundColorStyle": {"rgbColor": {"red": 0.91, "green": 0.95, "blue": 0.99}},
                         }
                     },
                     "fields": "userEnteredFormat(textFormat,horizontalAlignment,backgroundColorStyle)",
@@ -728,19 +948,22 @@ class GoogleSheetsGateway:
             },
             {
                 "repeatCell": {
-                    "range": {
-                        "sheetId": dashboard_sheet_id,
-                        "startRowIndex": 5,
-                        "endRowIndex": 6,
-                        "startColumnIndex": 0,
-                        "endColumnIndex": 2,
+                    "range": {"sheetId": dashboard_sheet_id, "startRowIndex": 2, "endRowIndex": 6, "startColumnIndex": 0, "endColumnIndex": 8},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColorStyle": {"rgbColor": {"red": 0.98, "green": 0.98, "blue": 0.98}},
+                        }
                     },
+                    "fields": "userEnteredFormat.backgroundColorStyle",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {"sheetId": dashboard_sheet_id, "startRowIndex": 6, "endRowIndex": 7, "startColumnIndex": 0, "endColumnIndex": 2},
                     "cell": {
                         "userEnteredFormat": {
                             "textFormat": {"bold": True},
-                            "backgroundColorStyle": {
-                                "rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
-                            },
+                            "backgroundColorStyle": {"rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}},
                         }
                     },
                     "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
@@ -748,19 +971,11 @@ class GoogleSheetsGateway:
             },
             {
                 "repeatCell": {
-                    "range": {
-                        "sheetId": dashboard_sheet_id,
-                        "startRowIndex": 14,
-                        "endRowIndex": 15,
-                        "startColumnIndex": 0,
-                        "endColumnIndex": 2,
-                    },
+                    "range": {"sheetId": dashboard_sheet_id, "startRowIndex": 10, "endRowIndex": 11, "startColumnIndex": 0, "endColumnIndex": 5},
                     "cell": {
                         "userEnteredFormat": {
                             "textFormat": {"bold": True},
-                            "backgroundColorStyle": {
-                                "rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
-                            },
+                            "backgroundColorStyle": {"rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}},
                         }
                     },
                     "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
@@ -768,19 +983,11 @@ class GoogleSheetsGateway:
             },
             {
                 "repeatCell": {
-                    "range": {
-                        "sheetId": dashboard_sheet_id,
-                        "startRowIndex": 14,
-                        "endRowIndex": 15,
-                        "startColumnIndex": 3,
-                        "endColumnIndex": 5,
-                    },
+                    "range": {"sheetId": dashboard_sheet_id, "startRowIndex": 17, "endRowIndex": 18, "startColumnIndex": 0, "endColumnIndex": 5},
                     "cell": {
                         "userEnteredFormat": {
                             "textFormat": {"bold": True},
-                            "backgroundColorStyle": {
-                                "rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
-                            },
+                            "backgroundColorStyle": {"rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}},
                         }
                     },
                     "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
@@ -788,88 +995,68 @@ class GoogleSheetsGateway:
             },
             {
                 "repeatCell": {
-                    "range": {
-                        "sheetId": dashboard_sheet_id,
-                        "startRowIndex": 6,
-                        "endRowIndex": 12,
-                        "startColumnIndex": 1,
-                        "endColumnIndex": 2,
-                    },
+                    "range": {"sheetId": dashboard_sheet_id, "startRowIndex": 34, "endRowIndex": 35, "startColumnIndex": 0, "endColumnIndex": 5},
                     "cell": {
                         "userEnteredFormat": {
-                            "numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}
+                            "textFormat": {"bold": True},
+                            "backgroundColorStyle": {"rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}},
                         }
                     },
+                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {"sheetId": dashboard_sheet_id, "startRowIndex": 51, "endRowIndex": 52, "startColumnIndex": 0, "endColumnIndex": 6},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"bold": True},
+                            "backgroundColorStyle": {"rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}},
+                        }
+                    },
+                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {"sheetId": dashboard_sheet_id, "startRowIndex": 11, "endRowIndex": 220, "startColumnIndex": 1, "endColumnIndex": 2},
+                    "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}}},
                     "fields": "userEnteredFormat.numberFormat",
                 }
             },
             {
                 "repeatCell": {
-                    "range": {
-                        "sheetId": dashboard_sheet_id,
-                        "startRowIndex": 32,
-                        "endRowIndex": 33,
-                        "startColumnIndex": 0,
-                        "endColumnIndex": 6,
-                    },
-                    "cell": {
-                        "userEnteredFormat": {
-                            "textFormat": {"bold": True, "fontSize": 13},
-                            "backgroundColorStyle": {
-                                "rgbColor": {"red": 0.89, "green": 0.95, "blue": 1.0}
-                            },
-                        }
-                    },
-                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
-                }
-            },
-            {
-                "repeatCell": {
-                    "range": {
-                        "sheetId": dashboard_sheet_id,
-                        "startRowIndex": 34,
-                        "endRowIndex": 35,
-                        "startColumnIndex": 0,
-                        "endColumnIndex": 6,
-                    },
-                    "cell": {
-                        "userEnteredFormat": {
-                            "textFormat": {"bold": True},
-                            "backgroundColorStyle": {
-                                "rgbColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
-                            },
-                        }
-                    },
-                    "fields": "userEnteredFormat(textFormat,backgroundColorStyle)",
-                }
-            },
-            {
-                "repeatCell": {
-                    "range": {
-                        "sheetId": dashboard_sheet_id,
-                        "startRowIndex": 35,
-                        "endRowIndex": 235,
-                        "startColumnIndex": 1,
-                        "endColumnIndex": 6,
-                    },
-                    "cell": {
-                        "userEnteredFormat": {
-                            "numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}
-                        }
-                    },
+                    "range": {"sheetId": dashboard_sheet_id, "startRowIndex": 11, "endRowIndex": 220, "startColumnIndex": 4, "endColumnIndex": 5},
+                    "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}}},
                     "fields": "userEnteredFormat.numberFormat",
                 }
             },
             {
                 "updateDimensionProperties": {
-                    "range": {
-                        "sheetId": dashboard_sheet_id,
-                        "dimension": "COLUMNS",
-                        "startIndex": 0,
-                        "endIndex": 8,
-                    },
-                    "properties": {"pixelSize": 165},
+                    "range": {"sheetId": dashboard_sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1},
+                    "properties": {"pixelSize": 230},
                     "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {"sheetId": dashboard_sheet_id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
+                    "properties": {"pixelSize": 170},
+                    "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {"sheetId": dashboard_sheet_id, "dimension": "COLUMNS", "startIndex": 3, "endIndex": 5},
+                    "properties": {"pixelSize": 170},
+                    "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {"sheetId": dashboard_sheet_id, "dimension": "COLUMNS", "startIndex": 7, "endIndex": 9},
+                    "properties": {"hiddenByUser": True},
+                    "fields": "hiddenByUser",
                 }
             },
         ]
@@ -896,8 +1083,8 @@ class GoogleSheetsGateway:
                     "setDataValidation": {
                         "range": {
                             "sheetId": dashboard_sheet_id,
-                            "startRowIndex": 1,
-                            "endRowIndex": 2,
+                            "startRowIndex": 6,
+                            "endRowIndex": 7,
                             "startColumnIndex": 1,
                             "endColumnIndex": 2,
                         },
@@ -906,7 +1093,7 @@ class GoogleSheetsGateway:
                                 "type": "ONE_OF_LIST",
                                 "values": condition_values,
                             },
-                            "inputMessage": "Select dashboard period",
+                            "inputMessage": "Выберите период для сводки",
                             "strict": True,
                             "showCustomUi": True,
                         },
@@ -948,7 +1135,7 @@ class GoogleSheetsGateway:
             "addChart": {
                 "chart": {
                     "spec": {
-                        "title": "Category Breakdown",
+                        "title": "Расходы по категориям",
                         "pieChart": {
                             "legendPosition": "RIGHT_LEGEND",
                             "domain": {
@@ -956,7 +1143,7 @@ class GoogleSheetsGateway:
                                     "sources": [
                                         {
                                             "sheetId": dashboard_sheet_id,
-                                            "startRowIndex": 15,
+                                            "startRowIndex": 18,
                                             "endRowIndex": 215,
                                             "startColumnIndex": 0,
                                             "endColumnIndex": 1,
@@ -969,7 +1156,7 @@ class GoogleSheetsGateway:
                                     "sources": [
                                         {
                                             "sheetId": dashboard_sheet_id,
-                                            "startRowIndex": 15,
+                                            "startRowIndex": 18,
                                             "endRowIndex": 215,
                                             "startColumnIndex": 1,
                                             "endColumnIndex": 2,
@@ -983,7 +1170,7 @@ class GoogleSheetsGateway:
                         "overlayPosition": {
                             "anchorCell": {
                                 "sheetId": dashboard_sheet_id,
-                                "rowIndex": 14,
+                                "rowIndex": 17,
                                 "columnIndex": 5,
                             },
                             "offsetXPixels": 10,
@@ -1000,13 +1187,13 @@ class GoogleSheetsGateway:
             "addChart": {
                 "chart": {
                     "spec": {
-                        "title": "Monthly Spend Trend",
+                        "title": "Динамика расходов по месяцам",
                         "basicChart": {
                             "chartType": "COLUMN",
                             "legendPosition": "NO_LEGEND",
                             "axis": [
-                                {"position": "BOTTOM_AXIS", "title": "Month"},
-                                {"position": "LEFT_AXIS", "title": "Amount"},
+                                {"position": "BOTTOM_AXIS", "title": "Месяц"},
+                                {"position": "LEFT_AXIS", "title": "Сумма"},
                             ],
                             "domains": [
                                 {
@@ -1015,7 +1202,7 @@ class GoogleSheetsGateway:
                                             "sources": [
                                                 {
                                                     "sheetId": dashboard_sheet_id,
-                                                    "startRowIndex": 15,
+                                                    "startRowIndex": 18,
                                                     "endRowIndex": 215,
                                                     "startColumnIndex": 3,
                                                     "endColumnIndex": 4,
@@ -1032,7 +1219,7 @@ class GoogleSheetsGateway:
                                             "sources": [
                                                 {
                                                     "sheetId": dashboard_sheet_id,
-                                                    "startRowIndex": 15,
+                                                    "startRowIndex": 18,
                                                     "endRowIndex": 215,
                                                     "startColumnIndex": 4,
                                                     "endColumnIndex": 5,
@@ -1050,7 +1237,7 @@ class GoogleSheetsGateway:
                         "overlayPosition": {
                             "anchorCell": {
                                 "sheetId": dashboard_sheet_id,
-                                "rowIndex": 35,
+                                "rowIndex": 34,
                                 "columnIndex": 5,
                             },
                             "offsetXPixels": 10,
@@ -1067,13 +1254,13 @@ class GoogleSheetsGateway:
             "addChart": {
                 "chart": {
                     "spec": {
-                        "title": "Monthly Cashflow",
+                        "title": "Пополнения и расходы",
                         "basicChart": {
                             "chartType": "LINE",
                             "legendPosition": "BOTTOM_LEGEND",
                             "axis": [
-                                {"position": "BOTTOM_AXIS", "title": "Month"},
-                                {"position": "LEFT_AXIS", "title": "Amount"},
+                                {"position": "BOTTOM_AXIS", "title": "Месяц"},
+                                {"position": "LEFT_AXIS", "title": "Сумма"},
                             ],
                             "domains": [
                                 {
@@ -1082,7 +1269,7 @@ class GoogleSheetsGateway:
                                             "sources": [
                                                 {
                                                     "sheetId": dashboard_sheet_id,
-                                                    "startRowIndex": 35,
+                                                    "startRowIndex": 52,
                                                     "endRowIndex": 215,
                                                     "startColumnIndex": 0,
                                                     "endColumnIndex": 1,
@@ -1099,7 +1286,7 @@ class GoogleSheetsGateway:
                                             "sources": [
                                                 {
                                                     "sheetId": dashboard_sheet_id,
-                                                    "startRowIndex": 35,
+                                                    "startRowIndex": 52,
                                                     "endRowIndex": 215,
                                                     "startColumnIndex": 1,
                                                     "endColumnIndex": 2,
@@ -1115,7 +1302,7 @@ class GoogleSheetsGateway:
                                             "sources": [
                                                 {
                                                     "sheetId": dashboard_sheet_id,
-                                                    "startRowIndex": 35,
+                                                    "startRowIndex": 52,
                                                     "endRowIndex": 215,
                                                     "startColumnIndex": 2,
                                                     "endColumnIndex": 3,
@@ -1131,7 +1318,7 @@ class GoogleSheetsGateway:
                                             "sources": [
                                                 {
                                                     "sheetId": dashboard_sheet_id,
-                                                    "startRowIndex": 35,
+                                                    "startRowIndex": 52,
                                                     "endRowIndex": 215,
                                                     "startColumnIndex": 3,
                                                     "endColumnIndex": 4,
@@ -1149,7 +1336,7 @@ class GoogleSheetsGateway:
                         "overlayPosition": {
                             "anchorCell": {
                                 "sheetId": dashboard_sheet_id,
-                                "rowIndex": 69,
+                                "rowIndex": 51,
                                 "columnIndex": 5,
                             },
                             "offsetXPixels": 10,

@@ -8,6 +8,9 @@ from app.infra.db.models import Base
 
 
 class FakeSheetsGateway:
+    def __init__(self) -> None:
+        self._settings: dict[str, dict[str, str]] = {}
+
     async def create_spreadsheet(self, owner: OwnerContext) -> SpreadsheetInfo:
         return SpreadsheetInfo(
             sheet_id=f"sheet-{owner.telegram_id}",
@@ -25,6 +28,13 @@ class FakeSheetsGateway:
             sheet_id=sheet_id,
             sheet_url=f"https://docs.google.com/spreadsheets/d/{sheet_id}",
         )
+
+    async def get_settings(self, *, sheet_id: str) -> dict[str, str]:
+        return dict(self._settings.get(sheet_id, {}))
+
+    async def set_setting(self, *, sheet_id: str, key: str, value: str) -> None:
+        bucket = self._settings.setdefault(sheet_id, {})
+        bucket[key] = value
 
 
 class FakeQueue:

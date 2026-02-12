@@ -33,7 +33,7 @@ class AccountService:
     async def get_balances(self, *, actor_id: int) -> tuple[Decimal, Decimal, str]:
         family = await self._get_family(actor_id)
         if not family:
-            raise ValueError("Family is not initialized. Use onboarding first.")
+            raise ValueError("Семья не инициализирована. Сначала завершите подключение таблицы.")
         main_balance = Decimal(str(family.main_balance))
         savings_balance = Decimal(str(family.savings_balance))
         if family.balances_updated_at_utc is None:
@@ -223,7 +223,7 @@ class AccountService:
                 new_savings = current_savings - amount
                 entry_type = "spend_from_savings"
             else:
-                raise ValueError("Unsupported account operation.")
+                raise ValueError("Неизвестный тип операции по счету.")
 
             family.main_balance = float(new_main)
             family.savings_balance = float(new_savings)
@@ -251,9 +251,9 @@ class AccountService:
         families_repo = FamiliesRepo(session)
         family = await families_repo.get_family_for_actor(actor_id)
         if not family:
-            raise ValueError("Family is not initialized. Use onboarding first.")
+            raise ValueError("Семья не инициализирована. Сначала завершите подключение таблицы.")
         if actor_id != family.owner_telegram_id:
-            raise PermissionError("Only owner can change balances.")
+            raise PermissionError("Изменять балансы может только владелец семьи.")
         return family
 
     async def _bootstrap_balances_from_sheet(

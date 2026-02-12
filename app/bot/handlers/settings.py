@@ -82,7 +82,7 @@ async def settings_currency_request(callback: CallbackQuery, state: FSMContext) 
 async def settings_timezone_request(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SettingsStates.waiting_timezone)
     if callback.message:
-        await callback.message.answer("Введите timezone, например: Europe/Moscow")
+        await callback.message.answer("Введите часовой пояс, например: Europe/Moscow")
     await callback.answer()
 
 
@@ -155,7 +155,7 @@ async def settings_timezone_commit(
     try:
         ZoneInfo(value)
     except ZoneInfoNotFoundError:
-        await message.answer("Некорректная timezone. Пример: Europe/Moscow")
+        await message.answer("Некорректный часовой пояс. Пример: Europe/Moscow")
         return
 
     await services.settings.set_setting(user.id, "timezone", value)

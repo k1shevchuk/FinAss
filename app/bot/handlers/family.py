@@ -12,6 +12,14 @@ from app.utils.validation import is_valid_telegram_username
 router = Router()
 
 
+def _role_label(role: str) -> str:
+    if role == "owner":
+        return "владелец"
+    if role == "editor":
+        return "участник"
+    return role
+
+
 def family_actions_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="➕ Создать инвайт", callback_data="family:invite")
@@ -34,7 +42,7 @@ async def _send_family_panel(message: Message, services: AppServices, actor_id: 
 
     lines = ["Участники семьи:"]
     for member_id, role in members:
-        lines.append(f"• {member_id}: {role}")
+        lines.append(f"• {member_id}: {_role_label(role)}")
     lines.append("\nУправление через кнопки ниже.")
     await message.answer("\n".join(lines), reply_markup=family_actions_keyboard())
 
@@ -83,7 +91,7 @@ async def family_remove_request(callback: CallbackQuery, state: FSMContext) -> N
 async def family_join_request(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(FamilyStates.waiting_join_code)
     if callback.message:
-        await callback.message.answer("Введите invite-код.")
+        await callback.message.answer("Введите код приглашения.")
     await callback.answer()
 
 
@@ -193,8 +201,8 @@ async def family_join_commit(message: Message, state: FSMContext, services: AppS
     await state.clear()
     await message.answer(
         "Вы подключены к семейной таблице.\n"
-        f"family_id: {result.family_id}\n"
-        f"role: {result.role.value}",
+        f"ID семьи: {result.family_id}\n"
+        f"Роль: {_role_label(result.role.value)}",
     )
     await _send_family_panel(message, services, user.id)
 
@@ -224,6 +232,6 @@ async def join_command(message: Message, services: AppServices) -> None:
 
     await message.answer(
         "Вы подключены к семейной таблице.\n"
-        f"family_id: {result.family_id}\n"
-        f"role: {result.role.value}",
+        f"ID семьи: {result.family_id}\n"
+        f"Роль: {_role_label(result.role.value)}",
     )

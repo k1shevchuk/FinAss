@@ -47,7 +47,7 @@ class ExpenseService:
             families_repo = FamiliesRepo(session)
             family = await families_repo.get_family_for_actor(actor_telegram_id)
             if not family:
-                raise ValueError("Family is not initialized. Use /start first.")
+                raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
             batch = ExpenseBatch(
                 actor_telegram_id=actor_telegram_id,
                 actor_name=actor_name,

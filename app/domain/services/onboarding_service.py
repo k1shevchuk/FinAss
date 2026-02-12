@@ -82,7 +82,10 @@ class OnboardingService:
             if not family:
                 return
 
-        settings = await self._sheets_gateway.get_settings(sheet_id=family.sheet_id)
+        try:
+            settings = await self._sheets_gateway.get_settings(sheet_id=family.sheet_id)
+        except Exception:  # noqa: BLE001
+            settings = {}
         if settings.get("dashboard_version") == DASHBOARD_VERSION:
             return
 

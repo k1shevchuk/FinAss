@@ -36,7 +36,7 @@ class ReceiptService:
             actor_telegram_id=actor_telegram_id, actor_name=actor_name
         )
         if not context:
-            raise ValueError("Family is not initialized. Use /start first.")
+            raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
         return await self._pipeline.process_photo(file_meta=file_meta, actor=context)
 
     async def build_batch_from_fallback(
@@ -56,7 +56,7 @@ class ReceiptService:
             actor_telegram_id=actor_telegram_id, actor_name=actor_name
         )
         if not context:
-            raise ValueError("Family is not initialized. Use /start first.")
+            raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
         local_dt = to_local(now_utc(), context.timezone)
         receipt_hash = build_receipt_hash(
             payload=payload,
@@ -106,9 +106,9 @@ class ReceiptService:
             actor_telegram_id=actor_telegram_id, actor_name=actor_name
         )
         if not context:
-            raise ValueError("Family is not initialized. Use /start first.")
+            raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
         if not items:
-            raise ValueError("No receipt items to persist.")
+            raise ValueError("В чеке нет позиций для сохранения.")
 
         local_dt = to_local(now_utc(), context.timezone)
         resolved_currency = currency or context.currency
@@ -163,7 +163,7 @@ class ReceiptService:
             families_repo = FamiliesRepo(session)
             family = await families_repo.get_family_for_actor(actor_telegram_id)
             if not family:
-                raise ValueError("Family is not initialized. Use /start first.")
+                raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
             await ProcessedReceiptsRepo(session).mark_processed(
                 family_id=family.family_id,
                 owner_telegram_id=family.owner_telegram_id,

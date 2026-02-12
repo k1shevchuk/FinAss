@@ -21,6 +21,14 @@ logger = get_logger(__name__)
 SERVICE_ACCOUNT_EDITOR = "hydra-950@finassbobot.iam.gserviceaccount.com"
 
 
+def _role_label(role: str) -> str:
+    if role == "owner":
+        return "владелец"
+    if role == "editor":
+        return "участник"
+    return role
+
+
 @router.message(CommandStart())
 @router.message(F.text == BTN_MENU)
 async def start_or_menu(message: Message, state: FSMContext, services: AppServices) -> None:
@@ -47,7 +55,7 @@ async def start_or_menu(message: Message, state: FSMContext, services: AppServic
     await state.set_state(OnboardingStates.waiting_setup_mode)
     await message.answer(
         "Привет! Я помогу вести личные и семейные расходы в Google Sheets.\n\n"
-        "Перед подключением выдайте вашей таблице доступ Editor для:\n"
+        "Перед подключением выдайте вашей таблице доступ «Редактор» для:\n"
         f"{SERVICE_ACCOUNT_EDITOR}\n\n"
         "Выберите действие:",
         reply_markup=onboarding_mode_keyboard(),
@@ -59,7 +67,7 @@ async def onboarding_choose_attach(message: Message, state: FSMContext) -> None:
     await state.set_state(OnboardingStates.waiting_sheet_link)
     await message.answer(
         "Отправьте ссылку на Google Таблицу или только ее ID.\n"
-        "Важно: у сервисного аккаунта должен быть доступ Editor к этой таблице:\n"
+        "Важно: у сервисного аккаунта должен быть доступ «Редактор» к этой таблице:\n"
         f"{SERVICE_ACCOUNT_EDITOR}"
     )
 
@@ -67,7 +75,7 @@ async def onboarding_choose_attach(message: Message, state: FSMContext) -> None:
 @router.message(OnboardingStates.waiting_setup_mode, F.text == BTN_ONB_JOIN)
 async def onboarding_choose_join(message: Message, state: FSMContext) -> None:
     await state.set_state(OnboardingStates.waiting_join_code)
-    await message.answer("Введите invite-код для подключения к общей таблице.")
+    await message.answer("Введите код приглашения для подключения к общей таблице.")
 
 
 @router.message(OnboardingStates.waiting_setup_mode, F.text == BTN_HELP)
@@ -146,7 +154,7 @@ async def onboarding_join_by_code(
     await state.clear()
     await message.answer(
         "Вы подключены к общей таблице.\n"
-        f"role: {result.role.value}\n"
+        f"Роль: {_role_label(result.role.value)}\n"
         "Теперь можно работать через главное меню.",
         reply_markup=main_menu_keyboard(),
     )
@@ -163,7 +171,7 @@ async def onboarding_attach_sheet(
     sheet_id = extract_google_sheet_id(message.text.strip())
     if not sheet_id:
         await message.answer(
-            "Не вижу корректный Google Sheet ID.\n"
+            "Не вижу корректный идентификатор Google Таблицы.\n"
             "Пришлите ссылку вида https://docs.google.com/spreadsheets/d/<ID>/edit"
         )
         return
@@ -197,7 +205,7 @@ async def onboarding_attach_sheet(
         await message.answer(
             "Не удалось подключить таблицу.\n"
             f"Причина: {exc}\n\n"
-            "Убедитесь, что сервисному аккаунту выдан доступ Editor к таблице:\n"
+            "Убедитесь, что сервисному аккаунту выдан доступ «Редактор» к таблице:\n"
             f"{SERVICE_ACCOUNT_EDITOR}"
         )
     except Exception as exc:  # noqa: BLE001

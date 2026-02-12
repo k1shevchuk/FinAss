@@ -24,7 +24,7 @@ def test_category_keyboard_uses_short_callback_payloads() -> None:
     assert all(len(value) <= 64 for value in callback_values)
 
 
-def test_merge_default_and_sheet_categories_prefers_sheet_override() -> None:
+def test_merge_default_and_sheet_categories_merges_keywords_and_prefers_sheet_enabled() -> None:
     defaults = load_default_category_rules()
     assert defaults
     first_default = defaults[0]
@@ -42,4 +42,5 @@ def test_merge_default_and_sheet_categories_prefers_sheet_override() -> None:
     assert "custom sheet" in by_key
     overridden = by_key[first_default.category.casefold()]
     assert overridden.enabled is False
-    assert overridden.keywords == ["manual-override"]
+    assert "manual-override" in overridden.keywords
+    assert any(keyword in overridden.keywords for keyword in first_default.keywords)

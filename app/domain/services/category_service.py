@@ -61,7 +61,7 @@ class CategoryService:
     async def add_category(self, actor_id: int, category: str, keywords: list[str]) -> None:
         sheet_id = await self._get_sheet_id(actor_id)
         if not sheet_id:
-            raise ValueError("Family is not initialized. Use /start first.")
+            raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
         await self._sheets_gateway.add_category(
             sheet_id=sheet_id,
             category=category,
@@ -72,7 +72,7 @@ class CategoryService:
     async def set_category_enabled(self, actor_id: int, category: str, enabled: bool) -> bool:
         sheet_id = await self._get_sheet_id(actor_id)
         if not sheet_id:
-            raise ValueError("Family is not initialized. Use /start first.")
+            raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
         updated = await self._sheets_gateway.set_category_enabled(
             sheet_id=sheet_id,
             category=category,
@@ -84,7 +84,7 @@ class CategoryService:
     async def sync_defaults_to_sheet(self, actor_id: int) -> int:
         sheet_id = await self._get_sheet_id(actor_id)
         if not sheet_id:
-            raise ValueError("Family is not initialized. Use /start first.")
+            raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
         current = await self._sheets_gateway.get_categories(sheet_id=sheet_id)
         current_index = {item.category.casefold() for item in current}
         missing = [
@@ -115,9 +115,34 @@ class CategoryService:
                 enabled=rule.enabled,
             )
         for rule in sheet_categories:
-            merged[rule.category.casefold()] = CategoryRule(
-                category=rule.category,
-                keywords=list(rule.keywords),
+            key = rule.category.casefold()
+            current = merged.get(key)
+            if current is None:
+                merged[key] = CategoryRule(
+                    category=rule.category,
+                    keywords=list(rule.keywords),
+                    enabled=rule.enabled,
+                )
+                continue
+
+            merged[key] = CategoryRule(
+                category=rule.category or current.category,
+                keywords=CategoryService._merge_keywords(current.keywords, rule.keywords),
                 enabled=rule.enabled,
             )
         return list(merged.values())
+
+    @staticmethod
+    def _merge_keywords(base: list[str], extra: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for value in [*base, *extra]:
+            token = str(value).strip()
+            if not token:
+                continue
+            key = token.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(token)
+        return out
