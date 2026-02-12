@@ -190,6 +190,40 @@ class AccountService:
         )
         return new_main, new_savings, currency
 
+    async def spend_main_for_expense(
+        self,
+        *,
+        actor_id: int,
+        actor_name: str,
+        amount: Decimal,
+        note: str | None,
+    ) -> tuple[Decimal, Decimal, str]:
+        family, new_main, new_savings, currency, ledger_rows = await self._apply_operation(
+            actor_id=actor_id,
+            amount=amount,
+            operation="spend_main",
+            note=note,
+            owner_only=False,
+        )
+        await self._audit_service.log(
+            family_id=family.family_id,
+            actor_telegram_id=actor_id,
+            action="accounts.spend_main",
+            details_safe_json={
+                "amount": self._format_decimal(amount),
+                "currency": currency,
+                "actor_name": actor_name,
+            },
+            sheet_id=family.sheet_id,
+        )
+        await self._enqueue_ledger_rows(sheet_id=family.sheet_id, rows=ledger_rows)
+        await self._sync_balances_to_sheet(
+            sheet_id=family.sheet_id,
+            main_balance=new_main,
+            savings_balance=new_savings,
+        )
+        return new_main, new_savings, currency
+
     async def _apply_operation(
         self,
         *,
@@ -197,11 +231,15 @@ class AccountService:
         amount: Decimal,
         operation: str,
         note: str | None,
+        owner_only: bool = True,
     ) -> tuple[Family, Decimal, Decimal, str, list[LedgerEntry]]:
         if amount <= Decimal("0"):
             raise ValueError("Сумма должна быть больше нуля.")
         async with self._session_factory() as session:
-            family = await self._require_owner_family(actor_id=actor_id, session=session)
+            if owner_only:
+                family = await self._require_owner_family(actor_id=actor_id, session=session)
+            else:
+                family = await self._require_family_member(actor_id=actor_id, session=session)
             current_main = Decimal(str(family.main_balance))
             current_savings = Decimal(str(family.savings_balance))
             currency = family.default_currency
@@ -222,6 +260,10 @@ class AccountService:
                 new_main = current_main
                 new_savings = current_savings - amount
                 entry_type = "spend_from_savings"
+            elif operation == "spend_main":
+                new_main = current_main - amount
+                new_savings = current_savings
+                entry_type = "spend_main"
             else:
                 raise ValueError("Неизвестный тип операции по счету.")
 
@@ -254,6 +296,12 @@ class AccountService:
             raise ValueError("Семья не инициализирована. Сначала завершите подключение таблицы.")
         if actor_id != family.owner_telegram_id:
             raise PermissionError("Изменять балансы может только владелец семьи.")
+        return family
+
+    async def _require_family_member(self, *, actor_id: int, session: AsyncSession) -> Family:
+        family = await FamiliesRepo(session).get_family_for_actor(actor_id)
+        if not family:
+            raise ValueError("Семья не инициализирована. Сначала завершите подключение таблицы.")
         return family
 
     async def _bootstrap_balances_from_sheet(

@@ -270,13 +270,18 @@ async def add_confirm(callback: CallbackQuery, state: FSMContext, services: AppS
         await callback.answer()
         return
 
-    total, _ = await _persist_manual_item(
-        state=state,
-        services=services,
-        actor_id=callback.from_user.id,
-        actor_name=callback.from_user.full_name or str(callback.from_user.id),
-        deduct_from_savings=False,
-    )
+    try:
+        total, _ = await _persist_manual_item(
+            state=state,
+            services=services,
+            actor_id=callback.from_user.id,
+            actor_name=callback.from_user.full_name or str(callback.from_user.id),
+            deduct_from_savings=False,
+        )
+    except ValueError as exc:
+        await callback.message.answer(str(exc))
+        await callback.answer()
+        return
     await callback.message.answer(
         f"Позиция добавлена: {total:.2f} {data['currency']}",
         reply_markup=add_continue_keyboard(),
@@ -431,6 +436,13 @@ async def _persist_manual_item(
 
     if deduct_from_savings:
         await services.accounts.spend_from_savings(
+            actor_id=actor_id,
+            actor_name=actor_name,
+            amount=total,
+            note=f"expense:{data['item_name']}",
+        )
+    else:
+        await services.accounts.spend_main_for_expense(
             actor_id=actor_id,
             actor_name=actor_name,
             amount=total,

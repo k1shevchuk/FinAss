@@ -64,13 +64,23 @@ async def test_family_shared_balances_owner_and_editor(session_factory) -> None:
             note="editor should not topup",
         )
 
+    # Expense deductions should update shared main balance for any active member.
+    new_main, new_savings, _ = await accounts.spend_main_for_expense(
+        actor_id=200,
+        actor_name="Member 200",
+        amount=Decimal("50.00"),
+        note="expense:groceries",
+    )
+    assert new_main == Decimal("950.00")
+    assert new_savings == Decimal("300.00")
+
     new_main, new_savings, _ = await accounts.transfer_to_savings(
         actor_id=100,
         actor_name="Owner 100",
         amount=Decimal("200.00"),
         note="monthly savings",
     )
-    assert new_main == Decimal("800.00")
+    assert new_main == Decimal("750.00")
     assert new_savings == Decimal("500.00")
 
     new_main, new_savings, _ = await accounts.spend_from_savings(
@@ -79,11 +89,11 @@ async def test_family_shared_balances_owner_and_editor(session_factory) -> None:
         amount=Decimal("120.00"),
         note="vacation prepay",
     )
-    assert new_main == Decimal("800.00")
+    assert new_main == Decimal("750.00")
     assert new_savings == Decimal("380.00")
 
     member_main, member_savings, _ = await accounts.get_balances(actor_id=200)
-    assert member_main == Decimal("800.00")
+    assert member_main == Decimal("750.00")
     assert member_savings == Decimal("380.00")
 
     names = [name for name, _ in queue.jobs]

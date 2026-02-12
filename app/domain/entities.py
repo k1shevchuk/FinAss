@@ -161,6 +161,7 @@ class ReportOutput:
     top_merchants: list[tuple[str, Decimal]]
     topup_main: Decimal = Decimal("0")
     net_change: Decimal = Decimal("0")
+    spent_main: Decimal = Decimal("0")
     transferred_to_savings: Decimal = Decimal("0")
     spent_from_savings: Decimal = Decimal("0")
     debug_meta: dict[str, Any] = field(default_factory=dict)

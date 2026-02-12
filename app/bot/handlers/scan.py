@@ -449,6 +449,22 @@ async def scan_items_confirm(
             total_price=total,
             currency=currency,
         )
+    try:
+        await services.accounts.spend_main_for_expense(
+            actor_id=callback.from_user.id,
+            actor_name=callback.from_user.full_name or str(callback.from_user.id),
+            amount=total,
+            note="expense:receipt_scan",
+        )
+    except ValueError as exc:
+        logger.warning(
+            "scan.items.balance_deduct_failed",
+            telegram_id=callback.from_user.id,
+            error=str(exc),
+        )
+        await callback.message.answer(
+            "Чек записан, но не удалось обновить баланс. Откройте «Счета» и обновите данные."
+        )
     await state.clear()
     await callback.message.answer(
         f"Чек добавлен: {len(items)} позиций, сумма {total:.2f} {currency}.",
@@ -522,6 +538,22 @@ async def scan_confirm(callback: CallbackQuery, state: FSMContext, services: App
             event_local_datetime=batch.local_datetime,
             total_price=total,
             currency=currency,
+        )
+    try:
+        await services.accounts.spend_main_for_expense(
+            actor_id=callback.from_user.id,
+            actor_name=callback.from_user.full_name or str(callback.from_user.id),
+            amount=total,
+            note="expense:receipt_scan",
+        )
+    except ValueError as exc:
+        logger.warning(
+            "scan.fallback.balance_deduct_failed",
+            telegram_id=callback.from_user.id,
+            error=str(exc),
+        )
+        await callback.message.answer(
+            "Чек записан, но не удалось обновить баланс. Откройте «Счета» и обновите данные."
         )
     await state.clear()
     await callback.message.answer("Чек добавлен в таблицу.", reply_markup=main_menu_keyboard())
