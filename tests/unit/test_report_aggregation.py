@@ -139,5 +139,6 @@ async def test_report_filter_logic() -> None:
     result = await service.generate(family_id, period, "UTC")
     assert result.totals.total == Decimal("300.00")
     assert result.totals.expenses_count == 2
-    assert result.net_change == Decimal("750.00")
+    assert result.net_change == Decimal("700.00")
+    assert result.spent_main == Decimal("300.00")
     assert result.transferred_to_savings == Decimal("250.00")

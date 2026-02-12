@@ -40,3 +40,12 @@ class ExpenseEntriesRepo:
         stmt = select(func.count(ExpenseEntry.id)).where(ExpenseEntry.family_id == family_id)
         result = await self.session.execute(stmt)
         return int(result.scalar() or 0)
+
+    async def list_by_family(self, *, family_id: UUID) -> list[ExpenseEntry]:
+        stmt = (
+            select(ExpenseEntry)
+            .where(ExpenseEntry.family_id == family_id)
+            .order_by(ExpenseEntry.created_at_utc.asc(), ExpenseEntry.id.asc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())

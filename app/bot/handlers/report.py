@@ -155,7 +155,7 @@ async def _send_report(
     if report.totals.expenses_count > 0:
         avg_check = report.totals.total / Decimal(report.totals.expenses_count)
     top_category = report.by_category[0].category if report.by_category else "Нет данных"
-    period_balance = report.topup_main - report.totals.total
+    period_balance = report.net_change
 
     try:
         main_balance, savings_balance, currency = await services.accounts.get_balances(
@@ -171,10 +171,11 @@ async def _send_report(
         f"Операций: {report.totals.expenses_count}",
         f"Средний чек: {avg_check:.2f} {report.totals.currency}",
         f"Топ категория: {top_category}",
-        f"Баланс периода (пополнения - расходы): {period_balance:.2f} {report.totals.currency}",
+        f"Чистое изменение баланса за период: {period_balance:.2f} {report.totals.currency}",
         "",
         "Операции по счетам за период:",
         f"- Пополнено основного: {report.topup_main:.2f} {report.totals.currency}",
+        f"- Расходы с основного: {report.spent_main:.2f} {report.totals.currency}",
         f"- Переведено в накопления: {report.transferred_to_savings:.2f} {report.totals.currency}",
         f"- Списано из накоплений: {report.spent_from_savings:.2f} {report.totals.currency}",
         "",
@@ -199,8 +200,11 @@ async def _send_report(
 
     lines.append("")
     lines.append("Топ магазинов:")
-    if report.top_merchants:
-        lines.extend([f"- {name}: {total:.2f}" for name, total in report.top_merchants])
+    merchants = [(name, total) for name, total in report.top_merchants if name != "N/A"]
+    if merchants:
+        lines.extend([f"- {name}: {total:.2f}" for name, total in merchants])
+    elif report.top_merchants:
+        lines.append("- Магазины не указаны в записях.")
     else:
         lines.append("- Нет данных")
 
@@ -219,5 +223,5 @@ def _text_bar_chart(by_category, total: Decimal) -> list[str]:
     for item in by_category[:6]:
         share = float(item.total / total) if total else 0.0
         bar = "█" * max(1, int(round(share * 20)))
-        chart.append(f"{item.category[:16]:<16} {bar} {share * 100:.1f}%")
+        chart.append(f"{item.category}: {bar} {share * 100:.1f}%")
     return chart

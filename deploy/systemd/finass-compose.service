@@ -1,0 +1,16 @@
+﻿[Unit]
+Description=FinAss Telegram Expense Tracker (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/finass
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up -d --build
+ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml down
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

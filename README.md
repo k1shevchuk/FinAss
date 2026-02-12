@@ -183,3 +183,29 @@ alembic upgrade head
 - `QR не найден`: улучшите резкость/контраст фото, уберите блики.
 - `Позиции чека не получены`: настройте `RECEIPT_ITEMS_PROVIDER=proverkacheka` и `RECEIPT_PROVIDER_API_TOKEN`, либо используйте fallback сценарий.
 - `Сначала подключите таблицу`: профиль/семья еще не инициализированы.
+- Если часть покупок не появилась в Google Sheets (из-за временных сетевых сбоев worker), выполните досинхронизацию из SQL:
+
+```bash
+docker compose run --rm bot python -m app.scripts.reconcile_expenses
+```
+
+## Deploy on Ubuntu VM
+
+Production deployment artifacts added:
+- `docker-compose.prod.yml`
+- `.env.prod.example`
+- `deploy/nginx/finass.conf.example`
+- `deploy/systemd/finass-compose.service`
+- `docs/DEPLOY_UBUNTU_VM.md`
+
+Quick start:
+
+```bash
+cp .env.prod.example .env.prod
+mkdir -p secrets
+# put google_service_account.json into ./secrets
+
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Full runbook: `docs/DEPLOY_UBUNTU_VM.md`

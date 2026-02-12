@@ -51,6 +51,7 @@ class ReportService:
                 top_merchants=[(x[0], Decimal(x[1])) for x in raw["top_merchants"]],
                 topup_main=Decimal(str(raw.get("topup_main", "0"))),
                 net_change=Decimal(str(raw.get("net_change", "0"))),
+                spent_main=Decimal(str(raw.get("spent_main", "0"))),
                 transferred_to_savings=Decimal(str(raw.get("transferred_to_savings", "0"))),
                 spent_from_savings=Decimal(str(raw.get("spent_from_savings", "0"))),
                 debug_meta=raw.get("debug_meta", {}),
@@ -94,6 +95,7 @@ class ReportService:
                     "top_merchants": [[x[0], str(x[1])] for x in output.top_merchants],
                     "topup_main": str(output.topup_main),
                     "net_change": str(output.net_change),
+                    "spent_main": str(output.spent_main),
                     "transferred_to_savings": str(output.transferred_to_savings),
                     "spent_from_savings": str(output.spent_from_savings),
                     "debug_meta": output.debug_meta,
@@ -171,7 +173,7 @@ class ReportService:
             by_merchant[merchant] += row_total
 
         topup_main = Decimal("0")
-        net_change = Decimal("0")
+        explicit_spent_main = Decimal("0")
         transferred_to_savings = Decimal("0")
         spent_from_savings = Decimal("0")
         for ledger_row in ledger:
@@ -182,12 +184,19 @@ class ReportService:
                 continue
             if entry_type == "topup_main":
                 topup_main += amount
-                net_change += amount
             elif entry_type == "transfer_to_savings":
-                net_change -= amount
                 transferred_to_savings += amount
             elif entry_type == "spend_from_savings":
                 spent_from_savings += amount
+            elif entry_type == "spend_main":
+                explicit_spent_main += amount
+
+        # Backward compatibility with historical periods where spend_main ledger
+        # was not written yet: infer spending from expenses minus explicit savings spend.
+        inferred_spent_main = explicit_spent_main
+        if explicit_spent_main == Decimal("0") and total > Decimal("0"):
+            inferred_spent_main = max(total - spent_from_savings, Decimal("0"))
+        net_change = topup_main - inferred_spent_main - spent_from_savings
 
         return ReportOutput(
             totals=ReportTotals(
@@ -204,6 +213,7 @@ class ReportService:
             top_merchants=sorted(by_merchant.items(), key=lambda x: x[1], reverse=True)[:5],
             topup_main=topup_main,
             net_change=net_change,
+            spent_main=inferred_spent_main,
             transferred_to_savings=transferred_to_savings,
             spent_from_savings=spent_from_savings,
             debug_meta={},

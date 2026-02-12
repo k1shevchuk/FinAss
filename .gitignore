@@ -18,6 +18,8 @@ venv/
 .env
 .env.*
 !.env.example
+!.env.prod.example
+!deploy/.env.prod.example
 
 # IDE
 .idea/
