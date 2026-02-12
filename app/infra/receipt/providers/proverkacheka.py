@@ -25,12 +25,11 @@ class ProverkachekaReceiptProvider(FallbackReceiptProvider):
 
     async def fetch_items(self, ref: ReceiptRef) -> list[ReceiptItem]:
         params = _parse_payload_params(ref.raw_payload)
-        if not params:
-            return []
 
         endpoint = f"{self._base_url}/api/v1/check/get"
         payload: dict[str, str] = {"token": self._api_token, "qrraw": ref.raw_payload}
-        payload.update(params)
+        if params:
+            payload.update(params)
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
@@ -45,6 +44,16 @@ class ProverkachekaReceiptProvider(FallbackReceiptProvider):
             return []
 
         raw_items = _extract_items(body)
+        if not raw_items:
+            top_level_keys = list(body.keys()) if isinstance(body, dict) else []
+            data_keys: list[str] = []
+            if isinstance(body, dict) and isinstance(body.get("data"), dict):
+                data_keys = list(body["data"].keys())
+            logger.info(
+                "receipt.proverkacheka.empty_items",
+                top_level_keys=top_level_keys[:10],
+                data_keys=data_keys[:10],
+            )
         parsed_items: list[ReceiptItem] = []
         for raw_item in raw_items:
             item = _parse_item(raw_item)
@@ -79,11 +88,24 @@ def _extract_items(body: Any) -> list[dict[str, Any]]:
     if not isinstance(data, dict):
         return []
 
+    direct_items = data.get("items")
+    if isinstance(direct_items, list):
+        return [i for i in direct_items if isinstance(i, dict)]
+
     receipt_json = data.get("json")
     if isinstance(receipt_json, dict):
         items = receipt_json.get("items")
         if isinstance(items, list):
             return [i for i in items if isinstance(i, dict)]
+        ticket = receipt_json.get("ticket")
+        if isinstance(ticket, dict):
+            document = ticket.get("document")
+            if isinstance(document, dict):
+                receipt = document.get("receipt")
+                if isinstance(receipt, dict):
+                    nested_items = receipt.get("items")
+                    if isinstance(nested_items, list):
+                        return [i for i in nested_items if isinstance(i, dict)]
 
     # Defensive fallback for providers with alternative response envelope.
     ticket = data.get("ticket")
@@ -95,6 +117,11 @@ def _extract_items(body: Any) -> list[dict[str, Any]]:
                 items = receipt.get("items")
                 if isinstance(items, list):
                     return [i for i in items if isinstance(i, dict)]
+    check = data.get("check")
+    if isinstance(check, dict):
+        items = check.get("items")
+        if isinstance(items, list):
+            return [i for i in items if isinstance(i, dict)]
     return []
 
 

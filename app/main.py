@@ -111,19 +111,33 @@ async def build_runtime(settings: Settings) -> Runtime:
         decode_timeout_seconds=settings.qr_decode_timeout_seconds,
     )
     provider = FallbackReceiptProvider()
-    if (
-        settings.receipt_items_provider == "proverkacheka"
-        and settings.receipt_provider_api_token is not None
-    ):
+    provider_token = (
+        settings.receipt_provider_api_token.get_secret_value().strip()
+        if settings.receipt_provider_api_token is not None
+        else ""
+    )
+    if settings.receipt_items_provider == "proverkacheka" and provider_token:
         provider = ProverkachekaReceiptProvider(
-            api_token=settings.receipt_provider_api_token.get_secret_value(),
+            api_token=provider_token,
             base_url=settings.receipt_provider_base_url,
             timeout_seconds=settings.receipt_provider_timeout_seconds,
+        )
+        logger.info(
+            "receipt.provider.enabled",
+            provider="proverkacheka",
+            timeout_seconds=settings.receipt_provider_timeout_seconds,
+            base_url=settings.receipt_provider_base_url,
         )
     elif settings.receipt_items_provider == "proverkacheka":
         logger.warning(
             "receipt.provider.disabled.missing_token",
             receipt_items_provider=settings.receipt_items_provider,
+        )
+    else:
+        logger.info(
+            "receipt.provider.enabled",
+            provider="fallback",
+            reason="configured_none",
         )
     receipt_pipeline = ReceiptPipeline(
         downloader=downloader,

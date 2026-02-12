@@ -107,7 +107,18 @@ class GoogleSheetsGateway:
             )
             return await asyncio.to_thread(request.execute)
 
-        result = await self._retry_http(_append)
+        try:
+            result = await self._retry_http(_append)
+        except HttpError as exc:
+            if getattr(exc.resp, "status", None) != 400:
+                raise
+            logger.warning(
+                "sheets.append_expenses.repairing_template",
+                sheet_id=sheet_id,
+                error=str(exc),
+            )
+            await self._repair_expenses_tabs(sheet_id=sheet_id)
+            result = await self._retry_http(_append)
         updated = result.get("updates", {}).get("updatedRows", len(rows))
         return AppendResult(updated_rows=int(updated))
 
@@ -540,6 +551,21 @@ class GoogleSheetsGateway:
             range_name=f"{EXPENSES_TAB}!A2",
             value=projection_formula,
         )
+
+    async def _repair_expenses_tabs(self, *, sheet_id: str) -> None:
+        await self._ensure_template_tabs(
+            sheet_id=sheet_id,
+            rename_first_to_dashboard=False,
+        )
+        await self._batch_update_values(
+            sheet_id=sheet_id,
+            data=[
+                {"range": f"{RAW_EXPENSES_TAB}!A1:R1", "values": [EXPENSES_HEADERS]},
+                {"range": f"{EXPENSES_TAB}!A1:G1", "values": [USER_EXPENSES_HEADERS]},
+            ],
+        )
+        await self._write_expenses_projection(sheet_id=sheet_id)
+        await self._format_expenses_sheet(sheet_id=sheet_id)
 
     async def _ensure_spreadsheet_properties(self, *, sheet_id: str, timezone: str) -> None:
         async def _batch() -> dict[str, Any]:

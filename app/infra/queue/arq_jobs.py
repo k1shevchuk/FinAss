@@ -38,6 +38,14 @@ async def append_expenses_job(ctx: dict[str, Any], sheet_id: str, rows: list[lis
                 error=str(exc),
             )
             raise Retry(defer=30) from exc
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        logger.error(
+            "jobs.append_expenses.failed",
+            sheet_id=sheet_id,
+            rows=len(rows),
+            status=status,
+            error=str(exc),
+        )
         raise
 
 

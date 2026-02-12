@@ -88,3 +88,52 @@ async def test_proverkacheka_provider_returns_empty_on_http_error(
         ReceiptRef(raw_payload="t=20260211T2310&s=225.70&fn=1&i=2&fp=3&n=1")
     )
     assert items == []
+
+
+@pytest.mark.asyncio
+async def test_proverkacheka_provider_parses_data_items_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "code": 1,
+        "data": {
+            "items": [
+                {"name": "Кефир", "quantity": "1", "price": 9990, "sum": 9990},
+            ]
+        },
+    }
+    monkeypatch.setattr(
+        "app.infra.receipt.providers.proverkacheka.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeClient(payload),
+    )
+    provider = ProverkachekaReceiptProvider(api_token="test-api-token")  # noqa: S106
+    items = await provider.fetch_items(
+        ReceiptRef(raw_payload="t=20260211T2310&s=99.90&fn=1&i=2&fp=3&n=1")
+    )
+    assert len(items) == 1
+    assert items[0].name == "Кефир"
+    assert items[0].total_price == Decimal("99.90")
+
+
+@pytest.mark.asyncio
+async def test_proverkacheka_provider_uses_qrraw_when_params_not_parseable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "code": 1,
+        "data": {
+            "json": {
+                "items": [
+                    {"name": "Вода", "quantity": 1, "price": 2990, "sum": 2990},
+                ]
+            }
+        },
+    }
+    monkeypatch.setattr(
+        "app.infra.receipt.providers.proverkacheka.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeClient(payload),
+    )
+    provider = ProverkachekaReceiptProvider(api_token="test-api-token")  # noqa: S106
+    items = await provider.fetch_items(ReceiptRef(raw_payload="just-raw-payload-without-query-format"))
+    assert len(items) == 1
+    assert items[0].name == "Вода"
