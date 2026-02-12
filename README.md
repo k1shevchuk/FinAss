@@ -2,31 +2,38 @@
 
 Production-grade Telegram-бот для учета личных/семейных расходов:
 - ручной ввод трат и fallback-обработка чека по QR;
-- Google Sheets как пользовательский ledger;
-- SQLite (dev) / PostgreSQL (prod) для метаданных;
+- учет балансов (основной и накопительный счет);
+- SQL (SQLite dev / PostgreSQL prod) как primary-хранилище операций;
+- Google Sheets как пользовательская витрина/выгрузка и dashboard;
 - Redis для rate limit, кэша и очереди задач (ARQ worker).
 
 ## Архитектура
 
-- `bot` (`aiogram v3`): команды, FSM, inline UX.
+- `bot` (`aiogram v3`): кнопочный UX (reply + inline), FSM, fallback-команды.
 - `worker` (`arq`): запись батчей в Google Sheets и аудит.
 - `api` (`FastAPI`): webhook endpoint, health, metrics.
-- `db` (`SQLAlchemy + Alembic`): семьи, роли, invite, idempotency, audit.
-- `google` (`Sheets API + Drive API`): создание/шаринг таблицы и записи.
+- `db` (`SQLAlchemy + Alembic`): семьи, роли, invite, idempotency, audit, expense/ledger history.
+- `google` (`Sheets API + Drive API`): подключение таблицы, синхронизация projection и dashboard.
+  - Пользователь видит только 2 вкладки: `Сводка` и `Покупки`.
+  - Технические вкладки (`raw_expenses`, `settings`, `ledger`, `categories`, `users`, `audit`) скрыты.
 
 ## Ключевые решения v1
 
 - Только Service Account flow (без OAuth пользователя).
+- Только подключение существующей таблицы (без функции "создать таблицу").
 - Роли: `owner`, `editor`.
 - Invite-only join: `/join <code>`, TTL 1 час, одноразовый.
 - Private chat only.
-- Fallback-only для receipt provider (без внешних поставщиков позиций чека).
+- Для чеков: авто-позиции через optional provider + безопасный fallback, если провайдер недоступен.
+- Изменение балансов (`пополнить`/`перевести в накопления`) разрешено только `owner`.
 
 ## Быстрый старт (Windows 11 + Docker Desktop)
 
 1. Скопируйте `.env.example` в `.env` и заполните значения.
 2. Подготовьте Google credentials JSON и укажите путь в `GOOGLE_SERVICE_ACCOUNT_JSON_PATH`.
-3. Запустите:
+3. В вашей Google Таблице добавьте Editor-доступ для:
+   - `hydra-950@finassbobot.iam.gserviceaccount.com`
+4. Запустите:
 
 ```bash
 docker compose up --build
@@ -51,6 +58,19 @@ docker compose up --build
 1. Создайте бота через BotFather.
 2. Укажите `TELEGRAM_BOT_TOKEN` в `.env`.
 
+## Receipt provider: где взять API token
+
+Для автоподтягивания товарных позиций из QR (не только суммы) нужен внешний провайдер.
+
+1. Зарегистрируйтесь на `https://proverkacheka.com`.
+2. В личном кабинете получите API token.
+3. Добавьте в `.env`:
+   - `RECEIPT_ITEMS_PROVIDER=proverkacheka`
+   - `RECEIPT_PROVIDER_API_TOKEN=<ваш_токен>`
+4. Перезапустите контейнеры: `docker compose up -d --build bot worker`.
+
+Если токена нет или сервис временно недоступен, бот автоматически переключится на fallback-сценарий.
+
 ## Режимы запуска
 
 ### DEV (long polling)
@@ -65,24 +85,16 @@ docker compose up --build
 - проксируйте на `bot:8000` через nginx/caddy + TLS.
 - webhook endpoint: `POST /telegram/webhook`.
 
-## Команды
+## Навигация
 
-- `/start` — онбординг, создание и шаринг таблицы.
-- `/help`
-- `/add` — пошаговый ручной ввод.
-- `/scan` — пришлите фото чека с QR.
-- `/report` — week/month/year.
-- `/categories` — список/редактирование категорий.
-- `/family` — list/invite/remove.
-- `/join <код>` — вступить по инвайту.
-- `/settings` — currency/timezone/rounding.
-- `/cancel`
+- Основной сценарий полностью на кнопках (RU): после нажатия `Start` в Telegram дальше можно работать без ввода `/команд`.
+- Команды оставлены как технический fallback: `/start`, `/help`, `/add`, `/scan`, `/report`, `/accounts`, `/categories`, `/family`, `/join <код>`, `/settings`, `/cancel`.
 
 ## Пример UX сообщений
 
-### `/start`
+### Старт
 
-`Привет! Я создам Google-таблицу... Отправьте email Google для шаринга.`
+`Привет! ... Выберите действие: [Подключить таблицу] [Подключиться по коду]`
 
 ### `/add`
 
@@ -90,7 +102,8 @@ docker compose up --build
 
 ### `/scan`
 
-`Чек распознан... Провайдер товаров не настроен. [Записать одной суммой] [Внести вручную позиции]`
+`Чек распознан. Позиции получены автоматически... [Да] [Нет]`
+`Если авторазбор не сработал: [Записать одной суммой] [Внести вручную позиции]`
 
 ### `/family invite`
 
@@ -115,6 +128,11 @@ docker compose up --build
 - `LOG_LEVEL`
 - `DEFAULT_CURRENCY`
 - `DEFAULT_TIMEZONE`
+  - по умолчанию: `Europe/Berlin`
+- `RECEIPT_ITEMS_PROVIDER` (`none`/`proverkacheka`)
+- `RECEIPT_PROVIDER_API_TOKEN` (если включен `proverkacheka`)
+- `RECEIPT_PROVIDER_BASE_URL` (default: `https://proverkacheka.com`)
+- `RECEIPT_PROVIDER_TIMEOUT_SECONDS`
 
 Полный список: `.env.example`.
 
@@ -141,6 +159,8 @@ make typecheck
 alembic upgrade head
 ```
 
+В Docker Compose миграции запускаются автоматически в `bot` контейнере (`MIGRATE_ON_START=1`).
+
 ## Security notes
 
 - Секреты не хранятся в репозитории.
@@ -159,6 +179,33 @@ alembic upgrade head
 
 - `403 webhook`: проверьте `WEBHOOK_SECRET_TOKEN`.
 - `Google 403`: проверьте API enablement, SA credentials и права Drive.
+- `Google 403` при подключении: таблица должна быть расшарена на `hydra-950@finassbobot.iam.gserviceaccount.com` с ролью Editor.
 - `QR не найден`: улучшите резкость/контраст фото, уберите блики.
-- `Сначала выполните /start`: профиль/семья еще не инициализированы.
+- `Позиции чека не получены`: настройте `RECEIPT_ITEMS_PROVIDER=proverkacheka` и `RECEIPT_PROVIDER_API_TOKEN`, либо используйте fallback сценарий.
+- `Сначала подключите таблицу`: профиль/семья еще не инициализированы.
+- Если часть покупок не появилась в Google Sheets (из-за временных сетевых сбоев worker), выполните досинхронизацию из SQL:
 
+```bash
+docker compose run --rm bot python -m app.scripts.reconcile_expenses
+```
+
+## Deploy on Ubuntu VM
+
+Production deployment artifacts added:
+- `docker-compose.prod.yml`
+- `.env.prod.example`
+- `deploy/nginx/finass.conf.example`
+- `deploy/systemd/finass-compose.service`
+- `docs/DEPLOY_UBUNTU_VM.md`
+
+Quick start:
+
+```bash
+cp .env.prod.example .env.prod
+mkdir -p secrets
+# put google_service_account.json into ./secrets
+
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Full runbook: `docs/DEPLOY_UBUNTU_VM.md`

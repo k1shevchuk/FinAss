@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.entities import ExpenseBatch, ExpenseItem
 from app.domain.services.audit_service import AuditService
 from app.domain.value_objects import ExpenseSource
+from app.infra.db.models import ExpenseEntry
+from app.infra.db.repos.expense_entries_repo import ExpenseEntriesRepo
 from app.infra.db.repos.families_repo import FamiliesRepo
 
 
@@ -39,11 +41,13 @@ class ExpenseService:
         local_dt: datetime,
     ) -> None:
         total = quantity * unit_price
+        sheet_id: str
+        rows: list[ExpenseEntry]
         async with self._session_factory() as session:
             families_repo = FamiliesRepo(session)
             family = await families_repo.get_family_for_actor(actor_telegram_id)
             if not family:
-                raise ValueError("Family is not initialized. Use /start first.")
+                raise ValueError("Семья не инициализирована. Нажмите «Старт» и подключите таблицу.")
             batch = ExpenseBatch(
                 actor_telegram_id=actor_telegram_id,
                 actor_name=actor_name,
@@ -66,8 +70,11 @@ class ExpenseService:
                     )
                 ],
             )
+            sheet_id = family.sheet_id
+            rows = self._build_rows(batch=batch)
+            await ExpenseEntriesRepo(session).add_many(rows)
             await session.commit()
-        await self._enqueue_batch(sheet_id=family.sheet_id, batch=batch)
+        await self._enqueue_rows(sheet_id=sheet_id, rows=rows)
         await self._audit_service.log(
             family_id=batch.family_id,
             actor_telegram_id=batch.actor_telegram_id,
@@ -77,11 +84,15 @@ class ExpenseService:
                 "total": f"{total:.2f}",
                 "currency": currency,
             },
-            sheet_id=family.sheet_id,
+            sheet_id=sheet_id,
         )
 
     async def add_expense_batch(self, *, batch: ExpenseBatch, sheet_id: str) -> None:
-        await self._enqueue_batch(sheet_id=sheet_id, batch=batch)
+        rows = self._build_rows(batch=batch)
+        async with self._session_factory() as session:
+            await ExpenseEntriesRepo(session).add_many(rows)
+            await session.commit()
+        await self._enqueue_rows(sheet_id=sheet_id, rows=rows)
         total = sum((i.total_price for i in batch.items), start=Decimal("0"))
         await self._audit_service.log(
             family_id=batch.family_id,
@@ -96,29 +107,57 @@ class ExpenseService:
             sheet_id=sheet_id,
         )
 
-    async def _enqueue_batch(self, *, sheet_id: str, batch: ExpenseBatch) -> None:
-        rows = [self._to_row(item=item, batch=batch) for item in batch.items]
-        await self._queue.enqueue_job("append_expenses_job", sheet_id, rows)
+    async def _enqueue_rows(self, *, sheet_id: str, rows: list[ExpenseEntry]) -> None:
+        payload = [self._to_sheet_row(row) for row in rows]
+        await self._queue.enqueue_job("append_expenses_job", sheet_id, payload)
+
+    def _build_rows(self, *, batch: ExpenseBatch) -> list[ExpenseEntry]:
+        rows: list[ExpenseEntry] = []
+        for item in batch.items:
+            created_at_utc = datetime.now(tz=UTC)
+            rows.append(
+                ExpenseEntry(
+                    expense_id=str(uuid.uuid4()),
+                    created_at_utc=created_at_utc,
+                    local_datetime=batch.local_datetime,
+                    timezone=batch.timezone,
+                    actor_telegram_id=batch.actor_telegram_id,
+                    actor_name=batch.actor_name,
+                    owner_telegram_id=batch.owner_telegram_id,
+                    family_id=batch.family_id,
+                    source=batch.source.value,
+                    receipt_hash=batch.receipt_hash,
+                    item_name=item.item_name,
+                    quantity=float(item.quantity),
+                    unit_price=float(item.unit_price),
+                    total_price=float(item.total_price),
+                    currency=batch.currency,
+                    category=item.category,
+                    merchant=item.merchant,
+                    notes=item.notes,
+                )
+            )
+        return rows
 
     @staticmethod
-    def _to_row(*, item: ExpenseItem, batch: ExpenseBatch) -> list[str]:
+    def _to_sheet_row(row: ExpenseEntry) -> list[str]:
         return [
-            str(uuid.uuid4()),
-            datetime.now(tz=UTC).isoformat(),
-            batch.local_datetime.isoformat(),
-            batch.timezone,
-            str(batch.actor_telegram_id),
-            batch.actor_name,
-            str(batch.owner_telegram_id),
-            str(batch.family_id),
-            batch.source.value,
-            batch.receipt_hash or "",
-            item.item_name,
-            f"{item.quantity}",
-            f"{item.unit_price}",
-            f"{item.total_price}",
-            batch.currency,
-            item.category,
-            item.merchant or "",
-            item.notes or "",
+            row.expense_id,
+            row.created_at_utc.isoformat(),
+            row.local_datetime.isoformat(),
+            row.timezone,
+            str(row.actor_telegram_id),
+            row.actor_name,
+            str(row.owner_telegram_id),
+            str(row.family_id),
+            row.source,
+            row.receipt_hash or "",
+            row.item_name,
+            f"{row.quantity}",
+            f"{row.unit_price}",
+            f"{row.total_price}",
+            row.currency,
+            row.category,
+            row.merchant or "",
+            row.notes or "",
         ]

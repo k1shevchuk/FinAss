@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from dataclasses import dataclass
 
 import uvicorn
@@ -15,7 +16,9 @@ from app.bot.middlewares.correlation import CorrelationMiddleware
 from app.bot.middlewares.rate_limit import RateLimitMiddleware
 from app.config.logging import configure_logging
 from app.config.settings import Settings, get_settings
+from app.domain.services.account_service import AccountService
 from app.domain.services.audit_service import AuditService
+from app.domain.services.category_matcher_service import CategoryMatcherService
 from app.domain.services.category_service import CategoryService
 from app.domain.services.container import AppServices
 from app.domain.services.expense_service import ExpenseService
@@ -24,14 +27,15 @@ from app.domain.services.idempotency_service import IdempotencyService
 from app.domain.services.onboarding_service import OnboardingService
 from app.domain.services.receipt_service import ReceiptService
 from app.domain.services.report_service import ReportService
+from app.domain.services.reset_service import ResetService
 from app.domain.services.settings_service import SettingsService
-from app.infra.db.models import Base
 from app.infra.db.session import create_engine, create_session_factory
 from app.infra.google.drive_sharing import DriveSharing
 from app.infra.google.google_client_factory import GoogleClientFactory
 from app.infra.google.sheets_gateway import GoogleSheetsGateway
 from app.infra.receipt.pipeline import ReceiptPipeline
 from app.infra.receipt.providers.fallback import FallbackReceiptProvider
+from app.infra.receipt.providers.proverkacheka import ProverkachekaReceiptProvider
 from app.infra.receipt.qr_decode import QrDecoder
 from app.infra.telegram.file_downloader import TelegramFileDownloader
 from app.utils.rate_limit import RedisRateLimiter
@@ -52,15 +56,27 @@ class Runtime:
 
     async def close(self) -> None:
         await self.bot.session.close()
-        await self.redis.close()
-        await self.arq_pool.close()
+        await _aclose_or_close(self.redis)
+        await _aclose_or_close(self.arq_pool)
         await self.engine.dispose()
+
+
+async def _aclose_or_close(resource: object) -> None:
+    aclose = getattr(resource, "aclose", None)
+    if callable(aclose):
+        result = aclose()
+        if inspect.isawaitable(result):
+            await result
+        return
+    close = getattr(resource, "close", None)
+    if callable(close):
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
 
 async def build_runtime(settings: Settings) -> Runtime:
     engine = create_engine(settings)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     session_factory = create_session_factory(engine)
 
     redis = Redis.from_url(settings.redis_url, decode_responses=False)
@@ -94,13 +110,39 @@ async def build_runtime(settings: Settings) -> Runtime:
         max_pixels=settings.qr_max_pixels,
         decode_timeout_seconds=settings.qr_decode_timeout_seconds,
     )
+    provider = FallbackReceiptProvider()
+    if (
+        settings.receipt_items_provider == "proverkacheka"
+        and settings.receipt_provider_api_token is not None
+    ):
+        provider = ProverkachekaReceiptProvider(
+            api_token=settings.receipt_provider_api_token.get_secret_value(),
+            base_url=settings.receipt_provider_base_url,
+            timeout_seconds=settings.receipt_provider_timeout_seconds,
+        )
+    elif settings.receipt_items_provider == "proverkacheka":
+        logger.warning(
+            "receipt.provider.disabled.missing_token",
+            receipt_items_provider=settings.receipt_items_provider,
+        )
     receipt_pipeline = ReceiptPipeline(
         downloader=downloader,
         decoder=decoder,
-        provider=FallbackReceiptProvider(),
+        provider=provider,
     )
 
     audit_service = AuditService(session_factory=session_factory, queue=arq_pool)
+    category_service = CategoryService(
+        session_factory=session_factory,
+        redis=redis,
+        sheets_gateway=sheets_gateway,
+        settings=settings,
+    )
+    category_matcher = CategoryMatcherService(
+        category_service=category_service,
+        cache_ttl_seconds=settings.cache_ttl_seconds,
+    )
+
     services = AppServices(
         onboarding=OnboardingService(
             session_factory=session_factory,
@@ -110,6 +152,12 @@ async def build_runtime(settings: Settings) -> Runtime:
         expense=ExpenseService(
             session_factory=session_factory,
             queue=arq_pool,
+            audit_service=audit_service,
+        ),
+        accounts=AccountService(
+            session_factory=session_factory,
+            queue=arq_pool,
+            sheets_gateway=sheets_gateway,
             audit_service=audit_service,
         ),
         receipt=ReceiptService(session_factory=session_factory, pipeline=receipt_pipeline),
@@ -124,17 +172,17 @@ async def build_runtime(settings: Settings) -> Runtime:
             settings=settings,
             audit_service=audit_service,
         ),
-        categories=CategoryService(
-            session_factory=session_factory,
-            redis=redis,
-            sheets_gateway=sheets_gateway,
-            settings=settings,
-        ),
+        categories=category_service,
+        category_matcher=category_matcher,
         settings=SettingsService(
             session_factory=session_factory,
             redis=redis,
             sheets_gateway=sheets_gateway,
             settings=settings,
+        ),
+        reset=ResetService(
+            session_factory=session_factory,
+            sheets_gateway=sheets_gateway,
         ),
         audit=audit_service,
         idempotency=IdempotencyService(session_factory=session_factory),

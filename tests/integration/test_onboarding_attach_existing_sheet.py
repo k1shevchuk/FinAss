@@ -28,4 +28,3 @@ async def test_onboarding_attach_existing_sheet(session_factory) -> None:
         await session.commit()
         assert family is not None
         assert family.sheet_id == existing_sheet_id
-
