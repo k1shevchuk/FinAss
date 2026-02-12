@@ -55,6 +55,8 @@ class GoogleSheetsGateway:
         self._drive = drive_sharing
         self._settings = settings
         self._service_account_email: str | None = None
+        # googleapiclient discovery resources are not thread-safe; serialize calls per process.
+        self._api_lock = asyncio.Lock()
 
     async def create_spreadsheet(self, owner: OwnerContext) -> SpreadsheetInfo:
         _ = owner
@@ -1432,7 +1434,8 @@ class GoogleSheetsGateway:
 
     async def _retry_http(self, func: Any) -> Any:
         async def _wrapped() -> Any:
-            return await func()
+            async with self._api_lock:
+                return await func()
 
         return await retry_async(
             _wrapped,

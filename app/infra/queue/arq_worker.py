@@ -45,5 +45,7 @@ class WorkerSettings:
     functions = [append_expenses_job, append_audit_job, append_ledger_job, sync_users_sheet_job]
     on_startup = startup
     on_shutdown = shutdown
-    max_jobs = 50
+    # Keep low concurrency: Google API client in this process is serialized and
+    # excessive parallelism gives no throughput benefit while increasing risk.
+    max_jobs = 10
     max_tries = 25
