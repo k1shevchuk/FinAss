@@ -53,6 +53,22 @@ class Settings(BaseSettings):
     telegram_download_timeout_seconds: int = Field(
         default=15, alias="TELEGRAM_DOWNLOAD_TIMEOUT_SECONDS"
     )
+    receipt_items_provider: Literal["none", "proverkacheka"] = Field(
+        default="none",
+        alias="RECEIPT_ITEMS_PROVIDER",
+    )
+    receipt_provider_api_token: SecretStr | None = Field(
+        default=None,
+        alias="RECEIPT_PROVIDER_API_TOKEN",
+    )
+    receipt_provider_base_url: str = Field(
+        default="https://proverkacheka.com",
+        alias="RECEIPT_PROVIDER_BASE_URL",
+    )
+    receipt_provider_timeout_seconds: int = Field(
+        default=15,
+        alias="RECEIPT_PROVIDER_TIMEOUT_SECONDS",
+    )
 
     google_api_retry_max_attempts: int = Field(default=5, alias="GOOGLE_API_RETRY_MAX_ATTEMPTS")
     google_api_retry_base_delay_seconds: float = Field(

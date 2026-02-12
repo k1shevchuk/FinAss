@@ -35,6 +35,7 @@ from app.infra.google.google_client_factory import GoogleClientFactory
 from app.infra.google.sheets_gateway import GoogleSheetsGateway
 from app.infra.receipt.pipeline import ReceiptPipeline
 from app.infra.receipt.providers.fallback import FallbackReceiptProvider
+from app.infra.receipt.providers.proverkacheka import ProverkachekaReceiptProvider
 from app.infra.receipt.qr_decode import QrDecoder
 from app.infra.telegram.file_downloader import TelegramFileDownloader
 from app.utils.rate_limit import RedisRateLimiter
@@ -109,10 +110,25 @@ async def build_runtime(settings: Settings) -> Runtime:
         max_pixels=settings.qr_max_pixels,
         decode_timeout_seconds=settings.qr_decode_timeout_seconds,
     )
+    provider = FallbackReceiptProvider()
+    if (
+        settings.receipt_items_provider == "proverkacheka"
+        and settings.receipt_provider_api_token is not None
+    ):
+        provider = ProverkachekaReceiptProvider(
+            api_token=settings.receipt_provider_api_token.get_secret_value(),
+            base_url=settings.receipt_provider_base_url,
+            timeout_seconds=settings.receipt_provider_timeout_seconds,
+        )
+    elif settings.receipt_items_provider == "proverkacheka":
+        logger.warning(
+            "receipt.provider.disabled.missing_token",
+            receipt_items_provider=settings.receipt_items_provider,
+        )
     receipt_pipeline = ReceiptPipeline(
         downloader=downloader,
         decoder=decoder,
-        provider=FallbackReceiptProvider(),
+        provider=provider,
     )
 
     audit_service = AuditService(session_factory=session_factory, queue=arq_pool)

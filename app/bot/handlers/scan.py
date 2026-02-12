@@ -11,7 +11,7 @@ from app.bot.keyboards.add_flow import category_keyboard, category_suggestion_ke
 from app.bot.keyboards.common import confirm_keyboard
 from app.bot.keyboards.menu import BTN_SCAN, main_menu_keyboard, onboarding_mode_keyboard
 from app.bot.states.scan_receipt import ScanReceiptStates
-from app.domain.entities import TelegramPhotoMeta
+from app.domain.entities import ReceiptItem, TelegramPhotoMeta
 from app.domain.services.container import AppServices
 from app.infra.receipt.qr_decode import QrDecodeError
 from app.utils.idempotency import sha256_hex
@@ -167,6 +167,30 @@ async def scan_receive_photo(message: Message, state: FSMContext, services: AppS
         currency=result.receipt_ref.currency or "",
         categories=available_categories,
     )
+
+    if result.items:
+        normalized_items = await _normalize_receipt_items(
+            items=result.items,
+            categories=available_categories,
+            services=services,
+            actor_id=user.id,
+        )
+        total_from_items = sum((item.total_price for item in normalized_items), start=Decimal("0"))
+        await state.update_data(
+            receipt_items=_serialize_receipt_items(normalized_items),
+            total=f"{total_from_items:.2f}",
+        )
+        await state.set_state(ScanReceiptStates.confirm_items)
+        await message.answer(
+            "Чек распознан. Позиции получены автоматически.\n"
+            f"Найдено позиций: {len(normalized_items)}\n"
+            f"Сумма: {total_from_items:.2f}\n\n"
+            f"{_format_items_preview(normalized_items)}\n\n"
+            "Записать эти позиции в таблицу?",
+            reply_markup=confirm_keyboard("scan_items_confirm_yes", "scan_items_confirm_no"),
+        )
+        return
+
     await state.set_state(ScanReceiptStates.waiting_fallback_choice)
     total_label = (
         result.receipt_ref.total if result.receipt_ref.total is not None else "не определена"
@@ -175,7 +199,7 @@ async def scan_receive_photo(message: Message, state: FSMContext, services: AppS
         "Чек распознан.\n"
         f"Payload: {result.payload_preview}\n"
         f"Сумма: {total_label}\n\n"
-        "Провайдер товаров не настроен. Выберите сценарий:",
+        "Автоматически получить товарные позиции не удалось. Выберите сценарий:",
         reply_markup=fallback_choice_keyboard(),
     )
 
@@ -351,6 +375,88 @@ async def scan_fallback_category_legacy(callback: CallbackQuery, state: FSMConte
     await callback.answer()
 
 
+@router.callback_query(ScanReceiptStates.confirm_items, F.data == "scan_items_confirm_no")
+async def scan_items_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if callback.message:
+        await callback.message.answer("Сканирование отменено.", reply_markup=main_menu_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(ScanReceiptStates.confirm_items, F.data == "scan_items_confirm_yes")
+async def scan_items_confirm(
+    callback: CallbackQuery, state: FSMContext, services: AppServices
+) -> None:
+    if not callback.message or not callback.from_user:
+        return
+    idempotency_key = sha256_hex(f"{callback.from_user.id}|scan_items_submit|{callback.id}")
+    locked = await services.idempotency.check_and_lock(
+        scope="scan_items_submit",
+        actor_id=callback.from_user.id,
+        key=idempotency_key,
+        ttl_sec=3600,
+    )
+    if not locked:
+        await state.clear()
+        await callback.message.answer("Этот чек уже был подтвержден ранее.")
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    actor_family = await services.family.get_actor_family(callback.from_user.id)
+    if not actor_family:
+        await callback.message.answer(
+            "Семья не найдена. Подключите таблицу в онбординге.",
+            reply_markup=onboarding_mode_keyboard(),
+        )
+        await state.clear()
+        await callback.answer()
+        return
+    _, sheet_id, _, _, family_currency = actor_family
+    items = _deserialize_receipt_items(data.get("receipt_items"))
+    if not items:
+        await state.clear()
+        await callback.message.answer(
+            "Не удалось восстановить позиции чека. Попробуйте отправить фото снова."
+        )
+        await callback.answer()
+        return
+
+    currency = data.get("currency") or family_currency
+    total = sum((item.total_price for item in items), start=Decimal("0"))
+    try:
+        batch = await services.receipt.build_batch_from_items(
+            actor_telegram_id=callback.from_user.id,
+            actor_name=callback.from_user.full_name or str(callback.from_user.id),
+            payload=data["receipt_payload"],
+            items=items,
+            currency=currency,
+            merchant=data.get("merchant") or None,
+            notes=f"QR:{data.get('payload_preview', '')}",
+        )
+    except ValueError as exc:
+        await callback.message.answer(str(exc))
+        await state.clear()
+        await callback.answer()
+        return
+
+    await services.expense.add_expense_batch(batch=batch, sheet_id=sheet_id)
+    if batch.receipt_hash:
+        await services.receipt.mark_processed(
+            actor_telegram_id=callback.from_user.id,
+            receipt_hash=batch.receipt_hash,
+            event_local_datetime=batch.local_datetime,
+            total_price=total,
+            currency=currency,
+        )
+    await state.clear()
+    await callback.message.answer(
+        f"Чек добавлен: {len(items)} позиций, сумма {total:.2f} {currency}.",
+        reply_markup=main_menu_keyboard(),
+    )
+    await callback.answer()
+
+
 @router.callback_query(ScanReceiptStates.confirm_fallback, F.data == "scan_confirm_no")
 async def scan_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -470,3 +576,78 @@ async def _send_scan_summary(message: Message, state: FSMContext, category: str)
         summary,
         reply_markup=confirm_keyboard("scan_confirm_yes", "scan_confirm_no"),
     )
+
+
+async def _normalize_receipt_items(
+    *,
+    items: list[ReceiptItem],
+    categories: list[str],
+    services: AppServices,
+    actor_id: int,
+) -> list[ReceiptItem]:
+    normalized: list[ReceiptItem] = []
+    fallback_category = "Другое" if "Другое" in categories else (categories[0] if categories else "Другое")
+    for item in items:
+        category = item.category if item.category in categories else None
+        if not category:
+            suggested = await services.category_matcher.match(actor_id=actor_id, text=item.name)
+            if suggested and suggested in categories:
+                category = suggested
+        normalized.append(
+            ReceiptItem(
+                name=item.name,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                total_price=item.total_price,
+                category=category or fallback_category,
+            )
+        )
+    return normalized
+
+
+def _serialize_receipt_items(items: list[ReceiptItem]) -> list[dict[str, str]]:
+    return [
+        {
+            "name": item.name,
+            "quantity": str(item.quantity),
+            "unit_price": str(item.unit_price),
+            "total_price": str(item.total_price),
+            "category": item.category,
+        }
+        for item in items
+    ]
+
+
+def _deserialize_receipt_items(raw: object) -> list[ReceiptItem]:
+    if not isinstance(raw, list):
+        return []
+    parsed: list[ReceiptItem] = []
+    for value in raw:
+        if not isinstance(value, dict):
+            continue
+        try:
+            item = ReceiptItem(
+                name=str(value.get("name", "")).strip(),
+                quantity=Decimal(str(value.get("quantity", "1"))),
+                unit_price=Decimal(str(value.get("unit_price", "0"))),
+                total_price=Decimal(str(value.get("total_price", "0"))),
+                category=str(value.get("category", "Другое")).strip() or "Другое",
+            )
+        except (ArithmeticError, TypeError, ValueError):
+            continue
+        if item.name and item.total_price > Decimal("0"):
+            parsed.append(item)
+    return parsed
+
+
+def _format_items_preview(items: list[ReceiptItem], *, limit: int = 8) -> str:
+    if not items:
+        return "- Нет позиций"
+    lines: list[str] = []
+    for index, item in enumerate(items[:limit], start=1):
+        lines.append(
+            f"{index}. {item.name} - {item.quantity} x {item.unit_price} = {item.total_price} ({item.category})"
+        )
+    if len(items) > limit:
+        lines.append(f"... и еще {len(items) - limit} поз.")
+    return "\n".join(lines)

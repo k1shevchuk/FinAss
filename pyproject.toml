@@ -26,6 +26,7 @@ dependencies = [
   "google-auth>=2.36.0",
   "google-auth-httplib2>=0.2.0",
   "opencv-python-headless>=4.10.0.84",
+  "zxing-cpp>=2.2.0",
   "numpy>=2.1.0",
   "structlog>=24.4.0",
   "prometheus-client>=0.21.0",

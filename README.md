@@ -22,7 +22,7 @@ Production-grade Telegram-бот для учета личных/семейных
 - Роли: `owner`, `editor`.
 - Invite-only join: `/join <code>`, TTL 1 час, одноразовый.
 - Private chat only.
-- Fallback-only для receipt provider (без внешних поставщиков позиций чека).
+- Для чеков: авто-позиции через optional provider + безопасный fallback, если провайдер недоступен.
 - Изменение балансов (`пополнить`/`перевести в накопления`) разрешено только `owner`.
 
 ## Быстрый старт (Windows 11 + Docker Desktop)
@@ -87,7 +87,8 @@ docker compose up --build
 
 ### `/scan`
 
-`Чек распознан... Провайдер товаров не настроен. [Записать одной суммой] [Внести вручную позиции]`
+`Чек распознан. Позиции получены автоматически... [Да] [Нет]`
+`Если авторазбор не сработал: [Записать одной суммой] [Внести вручную позиции]`
 
 ### `/family invite`
 
@@ -113,6 +114,10 @@ docker compose up --build
 - `DEFAULT_CURRENCY`
 - `DEFAULT_TIMEZONE`
   - по умолчанию: `Europe/Berlin`
+- `RECEIPT_ITEMS_PROVIDER` (`none`/`proverkacheka`)
+- `RECEIPT_PROVIDER_API_TOKEN` (если включен `proverkacheka`)
+- `RECEIPT_PROVIDER_BASE_URL` (default: `https://proverkacheka.com`)
+- `RECEIPT_PROVIDER_TIMEOUT_SECONDS`
 
 Полный список: `.env.example`.
 
@@ -161,4 +166,5 @@ alembic upgrade head
 - `Google 403`: проверьте API enablement, SA credentials и права Drive.
 - `Google 403` при подключении: таблица должна быть расшарена на `hydra-950@finassbobot.iam.gserviceaccount.com` с ролью Editor.
 - `QR не найден`: улучшите резкость/контраст фото, уберите блики.
+- `Позиции чека не получены`: настройте `RECEIPT_ITEMS_PROVIDER=proverkacheka` и `RECEIPT_PROVIDER_API_TOKEN`, либо используйте fallback сценарий.
 - `Сначала подключите таблицу`: профиль/семья еще не инициализированы.

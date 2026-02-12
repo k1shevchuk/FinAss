@@ -7,6 +7,7 @@ from app.domain.entities import (
     ActorContext,
     ExpenseBatch,
     ExpenseItem,
+    ReceiptItem,
     ReceiptProcessResult,
     TelegramPhotoMeta,
 )
@@ -88,6 +89,65 @@ class ReceiptService:
                     notes=notes,
                 ),
             ],
+        )
+
+    async def build_batch_from_items(
+        self,
+        *,
+        actor_telegram_id: int,
+        actor_name: str,
+        payload: str,
+        items: list[ReceiptItem],
+        currency: str | None = None,
+        merchant: str | None = None,
+        notes: str | None = None,
+    ) -> ExpenseBatch:
+        context = await self._actor_context(
+            actor_telegram_id=actor_telegram_id, actor_name=actor_name
+        )
+        if not context:
+            raise ValueError("Family is not initialized. Use /start first.")
+        if not items:
+            raise ValueError("No receipt items to persist.")
+
+        local_dt = to_local(now_utc(), context.timezone)
+        resolved_currency = currency or context.currency
+        total = sum((item.total_price for item in items), start=Decimal("0"))
+        receipt_hash = build_receipt_hash(
+            payload=payload,
+            local_dt=local_dt,
+            total=total,
+            currency=resolved_currency,
+        )
+        await self._assert_not_processed(
+            owner_telegram_id=context.owner_telegram_id,
+            receipt_hash=receipt_hash,
+        )
+
+        expense_items = [
+            ExpenseItem(
+                item_name=item.name,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                total_price=item.total_price,
+                category=item.category,
+                merchant=merchant,
+                notes=notes,
+            )
+            for item in items
+        ]
+
+        return ExpenseBatch(
+            actor_telegram_id=context.telegram_id,
+            actor_name=context.display_name,
+            owner_telegram_id=context.owner_telegram_id,
+            family_id=context.family_id,
+            source=ExpenseSource.RECEIPT,
+            local_datetime=local_dt,
+            timezone=context.timezone,
+            currency=resolved_currency,
+            receipt_hash=receipt_hash,
+            items=expense_items,
         )
 
     async def mark_processed(
