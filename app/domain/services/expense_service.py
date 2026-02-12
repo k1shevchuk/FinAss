@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from arq.connections import ArqRedis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from structlog.stdlib import get_logger
 
 from app.domain.entities import ExpenseBatch, ExpenseItem
 from app.domain.services.audit_service import AuditService
@@ -11,6 +12,8 @@ from app.domain.value_objects import ExpenseSource
 from app.infra.db.models import ExpenseEntry
 from app.infra.db.repos.expense_entries_repo import ExpenseEntriesRepo
 from app.infra.db.repos.families_repo import FamiliesRepo
+
+logger = get_logger(__name__)
 
 
 class ExpenseService:
@@ -109,7 +112,13 @@ class ExpenseService:
 
     async def _enqueue_rows(self, *, sheet_id: str, rows: list[ExpenseEntry]) -> None:
         payload = [self._to_sheet_row(row) for row in rows]
-        await self._queue.enqueue_job("append_expenses_job", sheet_id, payload)
+        job = await self._queue.enqueue_job("append_expenses_job", sheet_id, payload)
+        logger.info(
+            "expense.enqueue.append_expenses",
+            sheet_id=sheet_id,
+            rows=len(payload),
+            job_id=str(getattr(job, "job_id", "")),
+        )
 
     def _build_rows(self, *, batch: ExpenseBatch) -> list[ExpenseEntry]:
         rows: list[ExpenseEntry] = []

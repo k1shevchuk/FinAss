@@ -45,7 +45,7 @@ class WorkerSettings:
     functions = [append_expenses_job, append_audit_job, append_ledger_job, sync_users_sheet_job]
     on_startup = startup
     on_shutdown = shutdown
-    # Keep low concurrency: Google API client in this process is serialized and
-    # excessive parallelism gives no throughput benefit while increasing risk.
-    max_jobs = 10
+    # Single-job worker is the safest mode for googleapiclient in long-running
+    # containers (prevents sporadic native crashes under parallel load).
+    max_jobs = 1
     max_tries = 25
