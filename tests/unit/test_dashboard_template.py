@@ -7,7 +7,7 @@ from app.infra.google.template_builder import (
 
 
 def test_dashboard_template_version_bumped() -> None:
-    assert DASHBOARD_VERSION == "4"
+    assert DASHBOARD_VERSION == "5"
 
 
 def test_dashboard_template_period_options_are_russian() -> None:
@@ -23,8 +23,10 @@ def test_dashboard_template_period_options_are_russian() -> None:
 def test_user_expenses_headers_are_compact() -> None:
     assert USER_EXPENSES_HEADERS == [
         "Название товара",
+        "Категория",
         "Количество",
         "Цена за единицу",
+        "Итого",
         "Кто купил",
         "Дата покупки",
     ]
@@ -34,3 +36,5 @@ def test_dashboard_uses_raw_expenses_projection() -> None:
     joined = " ".join(str(item) for item in DASHBOARD_BATCH_VALUES)
     assert "raw_expenses!N2:N" in joined
     assert "Нет данных" in joined
+    assert "chart_category" in joined
+    assert "INDEX(J2:J220" in joined

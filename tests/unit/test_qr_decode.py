@@ -72,6 +72,7 @@ async def test_qr_decoder_receipt_like_image() -> None:
 
 @pytest.mark.asyncio
 async def test_qr_decoder_real_receipt_fixture() -> None:
-    decoder = QrDecoder(max_pixels=12_000_000, decode_timeout_seconds=8)
+    # On low-CPU CI/VM runners this fixture can decode slower than synthetic images.
+    decoder = QrDecoder(max_pixels=12_000_000, decode_timeout_seconds=15)
     decoded = await decoder.decode(REAL_RECEIPT_FIXTURE_BYTES)
     assert decoded.startswith("t=20230502T2022")

@@ -460,7 +460,7 @@ class GoogleSheetsGateway:
             "valueInputOption": "RAW",
             "data": [
                 {"range": f"{DASHBOARD_TAB}!A1:H1", "values": [["Сводка расходов семьи", "", "", "", "", "", "", ""]]},
-                {"range": f"{EXPENSES_TAB}!A1:E1", "values": [USER_EXPENSES_HEADERS]},
+                {"range": f"{EXPENSES_TAB}!A1:G1", "values": [USER_EXPENSES_HEADERS]},
                 {"range": f"{RAW_EXPENSES_TAB}!A1:R1", "values": [EXPENSES_HEADERS]},
                 {"range": f"{CATEGORIES_TAB}!A1:C1", "values": [CATEGORIES_HEADERS]},
                 {"range": f"{USERS_TAB}!A1:D1", "values": [USERS_HEADERS]},
@@ -525,7 +525,7 @@ class GoogleSheetsGateway:
                 .values()
                 .clear(
                     spreadsheetId=sheet_id,
-                    range=f"{EXPENSES_TAB}!A2:E5000",
+                    range=f"{EXPENSES_TAB}!A2:G5000",
                     body={},
                 )
             )
@@ -533,7 +533,7 @@ class GoogleSheetsGateway:
 
         await self._retry_http(_clear)
         projection_formula = (
-            '=IFERROR(ARRAYFORMULA(FILTER({raw_expenses!K2:K,raw_expenses!L2:L,raw_expenses!M2:M,raw_expenses!F2:F,IFERROR(TEXT(DATEVALUE(LEFT(raw_expenses!C2:C,10)),"dd.mm.yyyy"),LEFT(raw_expenses!C2:C,10))},raw_expenses!K2:K<>"")),{"Нет данных","","","",""})'
+            '=IFERROR(ARRAYFORMULA(FILTER({raw_expenses!K2:K,raw_expenses!P2:P,raw_expenses!L2:L,raw_expenses!M2:M,raw_expenses!N2:N,raw_expenses!F2:F,IFERROR(TEXT(DATEVALUE(LEFT(raw_expenses!C2:C,10)),"dd.mm.yyyy"),LEFT(raw_expenses!C2:C,10))},raw_expenses!K2:K<>"")),{"Нет данных","","","","","",""})'
         )
         await self._update_single_cell(
             sheet_id=sheet_id,
@@ -576,7 +576,7 @@ class GoogleSheetsGateway:
                         "startRowIndex": 0,
                         "endRowIndex": 1,
                         "startColumnIndex": 0,
-                        "endColumnIndex": 5,
+                        "endColumnIndex": 7,
                     },
                     "cell": {
                         "userEnteredFormat": {
@@ -616,9 +616,9 @@ class GoogleSheetsGateway:
                         "sheetId": expenses_sheet_id,
                         "dimension": "COLUMNS",
                         "startIndex": 1,
-                        "endIndex": 4,
+                        "endIndex": 2,
                     },
-                    "properties": {"pixelSize": 160},
+                    "properties": {"pixelSize": 220},
                     "fields": "pixelSize",
                 }
             },
@@ -627,8 +627,32 @@ class GoogleSheetsGateway:
                     "range": {
                         "sheetId": expenses_sheet_id,
                         "dimension": "COLUMNS",
-                        "startIndex": 4,
+                        "startIndex": 2,
                         "endIndex": 5,
+                    },
+                    "properties": {"pixelSize": 145},
+                    "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": expenses_sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 5,
+                        "endIndex": 6,
+                    },
+                    "properties": {"pixelSize": 165},
+                    "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": expenses_sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 6,
+                        "endIndex": 7,
                     },
                     "properties": {"pixelSize": 170},
                     "fields": "pixelSize",
@@ -640,8 +664,8 @@ class GoogleSheetsGateway:
                         "sheetId": expenses_sheet_id,
                         "startRowIndex": 1,
                         "endRowIndex": 5000,
-                        "startColumnIndex": 1,
-                        "endColumnIndex": 3,
+                        "startColumnIndex": 2,
+                        "endColumnIndex": 5,
                     },
                     "cell": {
                         "userEnteredFormat": {
@@ -1054,7 +1078,7 @@ class GoogleSheetsGateway:
             },
             {
                 "updateDimensionProperties": {
-                    "range": {"sheetId": dashboard_sheet_id, "dimension": "COLUMNS", "startIndex": 7, "endIndex": 9},
+                    "range": {"sheetId": dashboard_sheet_id, "dimension": "COLUMNS", "startIndex": 7, "endIndex": 13},
                     "properties": {"hiddenByUser": True},
                     "fields": "hiddenByUser",
                 }
@@ -1143,10 +1167,10 @@ class GoogleSheetsGateway:
                                     "sources": [
                                         {
                                             "sheetId": dashboard_sheet_id,
-                                            "startRowIndex": 18,
+                                            "startRowIndex": 1,
                                             "endRowIndex": 215,
-                                            "startColumnIndex": 0,
-                                            "endColumnIndex": 1,
+                                            "startColumnIndex": 9,
+                                            "endColumnIndex": 10,
                                         }
                                     ]
                                 }
@@ -1156,10 +1180,10 @@ class GoogleSheetsGateway:
                                     "sources": [
                                         {
                                             "sheetId": dashboard_sheet_id,
-                                            "startRowIndex": 18,
+                                            "startRowIndex": 1,
                                             "endRowIndex": 215,
-                                            "startColumnIndex": 1,
-                                            "endColumnIndex": 2,
+                                            "startColumnIndex": 10,
+                                            "endColumnIndex": 11,
                                         }
                                     ]
                                 }
@@ -1202,10 +1226,10 @@ class GoogleSheetsGateway:
                                             "sources": [
                                                 {
                                                     "sheetId": dashboard_sheet_id,
-                                                    "startRowIndex": 18,
+                                                    "startRowIndex": 1,
                                                     "endRowIndex": 215,
-                                                    "startColumnIndex": 3,
-                                                    "endColumnIndex": 4,
+                                                    "startColumnIndex": 11,
+                                                    "endColumnIndex": 12,
                                                 }
                                             ]
                                         }
@@ -1219,10 +1243,10 @@ class GoogleSheetsGateway:
                                             "sources": [
                                                 {
                                                     "sheetId": dashboard_sheet_id,
-                                                    "startRowIndex": 18,
+                                                    "startRowIndex": 1,
                                                     "endRowIndex": 215,
-                                                    "startColumnIndex": 4,
-                                                    "endColumnIndex": 5,
+                                                    "startColumnIndex": 12,
+                                                    "endColumnIndex": 13,
                                                 }
                                             ]
                                         }

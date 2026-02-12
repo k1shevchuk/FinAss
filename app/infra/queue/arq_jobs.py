@@ -37,7 +37,7 @@ async def append_expenses_job(ctx: dict[str, Any], sheet_id: str, rows: list[lis
                 sheet_id=sheet_id,
                 error=str(exc),
             )
-            raise Retry(defer=30)
+            raise Retry(defer=30) from exc
         raise
 
 
@@ -55,7 +55,7 @@ async def append_audit_job(ctx: dict[str, Any], sheet_id: str, rows: list[list[s
                 sheet_id=sheet_id,
                 error=str(exc),
             )
-            raise Retry(defer=30)
+            raise Retry(defer=30) from exc
         raise
 
 
@@ -72,7 +72,7 @@ async def append_ledger_job(ctx: dict[str, Any], sheet_id: str, rows: list[list[
                 sheet_id=sheet_id,
                 error=str(exc),
             )
-            raise Retry(defer=30)
+            raise Retry(defer=30) from exc
         raise
 
 
@@ -89,5 +89,5 @@ async def sync_users_sheet_job(ctx: dict[str, Any], sheet_id: str, rows: list[li
                 sheet_id=sheet_id,
                 error=str(exc),
             )
-            raise Retry(defer=30)
+            raise Retry(defer=30) from exc
         raise

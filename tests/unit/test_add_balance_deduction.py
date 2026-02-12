@@ -21,7 +21,7 @@ class _DummyState:
             "added_count": 0,
             "added_total": "0",
         }
-        self.state = None
+        self.state: object | None = None
 
     async def get_data(self) -> dict[str, object]:
         return dict(self.data)

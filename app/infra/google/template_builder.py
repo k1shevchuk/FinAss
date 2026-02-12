@@ -35,8 +35,10 @@ EXPENSES_HEADERS = [
 # User-facing "Покупки" sheet.
 USER_EXPENSES_HEADERS = [
     "Название товара",
+    "Категория",
     "Количество",
     "Цена за единицу",
+    "Итого",
     "Кто купил",
     "Дата покупки",
 ]
@@ -59,7 +61,7 @@ LEDGER_HEADERS = [
 ]
 
 # Bump to force safe dashboard refresh for existing sheets.
-DASHBOARD_VERSION = "4"
+DASHBOARD_VERSION = "5"
 
 DASHBOARD_PERIOD_OPTIONS = [
     "Последние 7 дней",
@@ -124,7 +126,27 @@ DASHBOARD_BATCH_VALUES = [
                 '=IFERROR(COUNTA(FILTER(raw_expenses!A2:A,raw_expenses!A2:A<>"",IFERROR(DATEVALUE(LEFT(raw_expenses!C2:C,10)),0)>=H2,IFERROR(DATEVALUE(LEFT(raw_expenses!C2:C,10)),0)<=I2)),0)',
             ],
             ["Средний чек", "=IFERROR(B12/B13,0)"],
-            ["Топ категория", '=IFERROR(INDEX(A19:A220,MATCH(MAX(B19:B220),B19:B220,0)),"Нет данных")'],
+            ["Топ категория", '=IFERROR(INDEX(J2:J220,MATCH(MAX(K2:K220),K2:K220,0)),"Нет данных")'],
+        ],
+    },
+    {"range": f"{DASHBOARD_TAB}!J1:K1", "values": [["chart_category", "chart_total"]]},
+    {
+        "range": f"{DASHBOARD_TAB}!J2:K2",
+        "values": [
+            [
+                '=IFERROR(QUERY(FILTER({raw_expenses!P2:P,raw_expenses!N2:N},raw_expenses!P2:P<>"",raw_expenses!N2:N<>"",IFERROR(DATEVALUE(LEFT(raw_expenses!C2:C,10)),0)>=H2,IFERROR(DATEVALUE(LEFT(raw_expenses!C2:C,10)),0)<=I2),"select Col1,sum(Col2) group by Col1 order by sum(Col2) desc label Col1 \'\',sum(Col2) \'\'",0),{"Нет данных",0})',
+                "",
+            ]
+        ],
+    },
+    {"range": f"{DASHBOARD_TAB}!L1:M1", "values": [["chart_month", "chart_month_total"]]},
+    {
+        "range": f"{DASHBOARD_TAB}!L2:M2",
+        "values": [
+            [
+                '=IFERROR(QUERY(FILTER({TEXT(IFERROR(DATEVALUE(LEFT(raw_expenses!C2:C,10)),0),"yyyy-mm"),raw_expenses!N2:N},raw_expenses!N2:N<>"",IFERROR(DATEVALUE(LEFT(raw_expenses!C2:C,10)),0)>=H2,IFERROR(DATEVALUE(LEFT(raw_expenses!C2:C,10)),0)<=I2),"select Col1,sum(Col2) group by Col1 order by Col1 label Col1 \'\',sum(Col2) \'\'",0),{"Нет данных",0})',
+                "",
+            ]
         ],
     },
     {"range": f"{DASHBOARD_TAB}!D11:E11", "values": [["Счета", "Значение"]]},
