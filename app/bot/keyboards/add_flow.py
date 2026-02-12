@@ -63,7 +63,6 @@ def add_continue_keyboard() -> InlineKeyboardMarkup:
 def add_confirm_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Подтвердить", callback_data="add_confirm_yes")
-    builder.button(text="💰 Списать из накоплений", callback_data="add_confirm_savings")
     builder.button(text="✖️ Отмена", callback_data="add_confirm_no")
     builder.adjust(1)
     return builder.as_markup()

@@ -296,10 +296,15 @@ async def add_confirm_savings(
     if not isinstance(callback.message, Message) or not callback.from_user:
         return
 
+    # Backward compatibility for stale inline keyboards:
+    # manual add flow now always deducts from main account.
+    await callback.message.answer(
+        "В ручном добавлении расход всегда списывается с основного счёта."
+    )
     data = await state.get_data()
-    idempotency_key = sha256_hex(f"{callback.from_user.id}|manual_add_submit_savings|{callback.id}")
+    idempotency_key = sha256_hex(f"{callback.from_user.id}|manual_add_submit|{callback.id}")
     locked = await services.idempotency.check_and_lock(
-        scope="manual_expense_submit_savings",
+        scope="manual_expense_submit",
         actor_id=callback.from_user.id,
         key=idempotency_key,
         ttl_sec=3600,
@@ -316,19 +321,15 @@ async def add_confirm_savings(
             services=services,
             actor_id=callback.from_user.id,
             actor_name=callback.from_user.full_name or str(callback.from_user.id),
-            deduct_from_savings=True,
+            deduct_from_savings=False,
         )
-    except PermissionError:
-        await callback.message.answer("Только owner может списывать из накоплений.")
-        await callback.answer()
-        return
     except ValueError as exc:
         await callback.message.answer(str(exc))
         await callback.answer()
         return
 
     await callback.message.answer(
-        f"Позиция добавлена и списана из накоплений: {total:.2f} {data['currency']}",
+        f"Позиция добавлена: {total:.2f} {data['currency']}",
         reply_markup=add_continue_keyboard(),
     )
     await callback.answer()
